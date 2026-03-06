@@ -16,12 +16,14 @@ Your SSN, email, API keys, home directory paths, and private IPs never reach Ope
   - [Your First Run](#your-first-run)
 - [Usage Guide](#usage-guide)
   - [With Agent Zero](#with-agent-zero)
+  - [With OpenClaw](#with-openclaw)
   - [With Open WebUI](#with-open-webui)
   - [With Python Scripts](#with-python-scripts)
   - [With curl](#with-curl)
 - [CLI Reference](#cli-reference)
 - [How It Protects You](#how-it-protects-you)
 - [FAQ](#faq)
+- [Credits & Inspiration](#credits--inspiration)
 - [iTaK Ecosystem](#itak-ecosystem)
 - [License](#license)
 
@@ -29,28 +31,42 @@ Your SSN, email, API keys, home directory paths, and private IPs never reach Ope
 
 ## How It Works
 
-```
-Your AI Agent                    Cloud API
-     |                               ^
-     |  "Fix auth.py for             |  "Fix auth.py for
-     |   user john@acme.com          |   user [EMAIL_1]
-     |   at 192.168.1.50"            |   at [IP_ADDR_1]"
-     |                               |
-     v                               |
-  ┌──────────────────────────────────────┐
-  │            iTaK Shield               │
-  │                                      │
-  │  1. Scans outgoing request for PII   │
-  │  2. Replaces with typed tokens       │
-  │  3. Forwards sanitized request       │
-  │  4. Restores tokens in response      │
-  │                                      │
-  │  Token map lives in memory only.     │
-  │  Nothing is written to disk.         │
-  └──────────────────────────────────────┘
+```mermaid
+flowchart LR
+    A["Your AI Agent\n(Agent Zero, OpenClaw, etc.)"] -->|"Raw request with PII\njohn@acme.com\n192.168.1.50"| B["iTaK Shield"]
+    B -->|"Sanitized request\n[EMAIL_1]\n[IP_ADDR_1]"| C["Cloud API\n(OpenAI, Gemini, Claude)"]
+    C -->|"Response with tokens\n[EMAIL_1] has valid creds"| B
+    B -->|"Restored response\njohn@acme.com has valid creds"| A
+
+    style B fill:#1a1a2e,stroke:#e94560,stroke-width:3px,color:#fff
+    style A fill:#16213e,stroke:#0f3460,stroke-width:2px,color:#fff
+    style C fill:#16213e,stroke:#0f3460,stroke-width:2px,color:#fff
 ```
 
 The AI sees `[EMAIL_1]` instead of your real email. It still knows the value is an email address, so it can reason about it correctly. It just never learns *which* email. When the response comes back mentioning `[EMAIL_1]`, iTaK Shield swaps it back to your real email before you see it.
+
+### Under the Hood
+
+```mermaid
+flowchart TB
+    subgraph shield["iTaK Shield - What happens on your machine"]
+        direction TB
+        S1["1. Scanner\nDetects 8 types of PII\nusing pattern matching"] --> S2["2. Tokenizer\nReplaces real values with\ntyped placeholders"]
+        S2 --> S3["3. Proxy\nForwards sanitized request\nto cloud API"]
+        S3 --> S4["4. Restore\nSwaps tokens back to\nreal values in response"]
+    end
+
+    subgraph memory["Token Map (RAM only)"]
+        M1["john@acme.com → [EMAIL_1]"]
+        M2["192.168.1.50 → [IP_ADDR_1]"]
+        M3["123-45-6789 → [SSN_1]"]
+    end
+
+    shield -.->|"Lives in memory only.\nGarbage collected after\neach request."| memory
+
+    style shield fill:#0d1117,stroke:#30363d,stroke-width:2px,color:#c9d1d9
+    style memory fill:#161b22,stroke:#e94560,stroke-width:2px,color:#c9d1d9
+```
 
 ---
 
@@ -82,13 +98,28 @@ The AI sees `[EMAIL_1]` instead of your real email. It still knows the value is 
 
 If you're new to AI tools, here's what you need to know:
 
-**What are AI agents?** Programs like Agent Zero, Open WebUI, or ChatGPT that use large language models (LLMs) to help you with tasks. Many of these tools send your conversations to cloud servers run by companies like OpenAI, Google, or Anthropic.
+**What are AI agents?** Programs like [Agent Zero](https://github.com/frdel/agent-zero), [OpenClaw](https://github.com/agentic-labs/openclaw), [Open WebUI](https://github.com/open-webui/open-webui), or [ChatGPT](https://chat.openai.com) that use large language models (LLMs) to help you with tasks. Many of these tools send your conversations to cloud servers run by companies like [OpenAI](https://openai.com), [Google](https://ai.google.dev), or [Anthropic](https://anthropic.com).
+
+**Why does this matter now?** The AI agent movement is accelerating fast. [OpenClaw](https://github.com/agentic-labs/openclaw) helped spark a wave of open-source autonomous agents, and its creator was recently hired by OpenAI. [Agent Zero](https://github.com/frdel/agent-zero) brought fully autonomous coding and task execution to the open-source community. These tools are powerful, but when they're pointed at cloud APIs, your data goes with them.
 
 **What's the problem?** When you paste your code, documents, or personal info into these tools, that data gets sent to those companies' servers. Even if they say they don't train on your data, they still *see* it for safety monitoring, and their terms can change.
 
 **What does iTaK Shield do?** It acts like a privacy filter. It sits on YOUR computer between your AI tool and the cloud. Before your message leaves your machine, iTaK Shield finds sensitive things (emails, passwords, Social Security numbers, etc.) and replaces them with harmless labels. The AI gets the label instead of your real data. When the AI responds, iTaK Shield puts your real data back.
 
 **Do I need to be technical?** You need to be comfortable running a program from a terminal (Command Prompt on Windows, Terminal on Mac/Linux). The steps below walk you through everything.
+
+```mermaid
+flowchart TD
+    A["You type a message\nwith personal info"] --> B{"Are you using\na cloud API?"}
+    B -->|"Yes\n(OpenAI, Gemini, Claude)"| C["Start iTaK Shield\nbefore your AI tool"]
+    B -->|"No\n(Local model like Ollama)"| D["No need for Shield.\nYour data stays local."]
+    C --> E["Point your AI tool\nat iTaK Shield"]
+    E --> F["Use your tool normally.\nPII is auto-redacted."]
+
+    style C fill:#1a1a2e,stroke:#e94560,stroke-width:2px,color:#fff
+    style D fill:#0d1117,stroke:#30363d,stroke-width:2px,color:#c9d1d9
+    style F fill:#0d3d0d,stroke:#2ea043,stroke-width:2px,color:#fff
+```
 
 ---
 
@@ -247,6 +278,8 @@ That means it's working. The email and IP were replaced before leaving your mach
 
 ### With Agent Zero
 
+[Agent Zero](https://github.com/frdel/agent-zero) is a fully autonomous AI agent framework that can execute code, browse the web, and manage files. When it uses cloud APIs, your data goes with it. iTaK Shield fixes that.
+
 1. Start iTaK Shield pointing at your LLM provider:
 
 ```bash
@@ -265,7 +298,31 @@ API_URL=http://127.0.0.1:8080
 
 3. Use Agent Zero normally. All requests are now automatically sanitized.
 
+### With OpenClaw
+
+[OpenClaw](https://github.com/agentic-labs/openclaw) is the open-source autonomous agent that helped kick off the current wave of AI agent development. Its creator was hired by OpenAI, bringing the project global attention.
+
+1. Start iTaK Shield:
+
+```bash
+itak-shield --target https://api.openai.com --port 8080
+```
+
+2. In your OpenClaw configuration, update the API endpoint:
+
+```
+# Before:
+api_base: https://api.openai.com
+
+# After (through iTaK Shield):
+api_base: http://127.0.0.1:8080
+```
+
+3. Run OpenClaw as you normally would. iTaK Shield intercepts and sanitizes every request transparently.
+
 ### With Open WebUI
+
+[Open WebUI](https://github.com/open-webui/open-webui) is a self-hosted web interface for interacting with LLMs. It supports multiple backends and is widely used for local AI deployments.
 
 1. Start iTaK Shield:
 
@@ -283,7 +340,7 @@ http://127.0.0.1:8080
 
 ### With Python Scripts
 
-If you use the OpenAI Python library:
+If you use the [OpenAI Python library](https://github.com/openai/openai-python):
 
 ```python
 from openai import OpenAI
@@ -352,37 +409,26 @@ itak-shield --version
 
 ## How It Protects You
 
-### What happens without iTaK Shield
+```mermaid
+flowchart TB
+    subgraph without["Without iTaK Shield"]
+        direction TB
+        W1["You: Fix the bug for\njohn.smith@acme.com\nSSN: 123-45-6789"] -->|"Sent as-is"| W2["Cloud sees:\nYour real email\nYour real SSN\nYour file paths"]
+    end
 
-```
-You: "Fix the bug in C:\Users\David\Projects\secret-app\auth.py
-      for user john.smith@acme.com (SSN: 123-45-6789)"
+    subgraph with["With iTaK Shield"]
+        direction TB
+        A1["You: Fix the bug for\njohn.smith@acme.com\nSSN: 123-45-6789"] -->|"Intercepted"| A2["iTaK Shield\nredacts PII"]
+        A2 -->|"Sanitized"| A3["Cloud sees:\n[EMAIL_1]\n[SSN_1]\n[PATH_1]"]
+        A3 -->|"AI responds"| A4["iTaK Shield\nrestores tokens"]
+        A4 -->|"You see original\nvalues restored"| A5["Full response with\nyour real data back"]
+    end
 
-          ↓ Sent to cloud as-is ↓
-
-Cloud sees: Your real name, file path, email, and SSN
-```
-
-### What happens with iTaK Shield
-
-```
-You: "Fix the bug in C:\Users\David\Projects\secret-app\auth.py
-      for user john.smith@acme.com (SSN: 123-45-6789)"
-
-          ↓ iTaK Shield intercepts ↓
-
-Cloud sees: "Fix the bug in [PATH_1]\auth.py
-            for user [EMAIL_1] (SSN: [SSN_1])"
-
-          ↓ AI responds with tokens ↓
-
-Cloud sends: "Check [PATH_1]\auth.py line 42.
-             Make sure [EMAIL_1] has valid credentials."
-
-          ↓ iTaK Shield restores ↓
-
-You see: "Check C:\Users\David\Projects\secret-app\auth.py line 42.
-         Make sure john.smith@acme.com has valid credentials."
+    style without fill:#2d1117,stroke:#da3633,stroke-width:2px,color:#f85149
+    style with fill:#0d1117,stroke:#2ea043,stroke-width:2px,color:#3fb950
+    style W2 fill:#4a1010,stroke:#da3633,stroke-width:2px,color:#f85149
+    style A2 fill:#1a1a2e,stroke:#e94560,stroke-width:2px,color:#fff
+    style A5 fill:#0d3d0d,stroke:#2ea043,stroke-width:2px,color:#fff
 ```
 
 The mapping between tokens and real values exists **only in your computer's memory** for the duration of that single request. It is never saved to disk, never logged, and is garbage collected the moment the response is delivered.
@@ -410,7 +456,26 @@ No. The token map (the mapping between your real data and the placeholders) live
 You could, but there's no point. If you're running a model locally, your data never leaves your machine anyway. iTaK Shield is specifically for protecting your data when using *cloud* APIs.
 
 **Q: What about my API key?**
-iTaK Shield passes your API key through unchanged - it needs to reach the cloud provider so your request is authenticated. The proxy runs on YOUR machine, so your key never goes anywhere it wouldn't already go.
+iTaK Shield passes your API key through unchanged. It needs to reach the cloud provider so your request is authenticated. The proxy runs on YOUR machine, so your key never goes anywhere it wouldn't already go.
+
+---
+
+## Credits & Inspiration
+
+iTaK Shield was born from a real conversation in the AI community about whether autonomous agents are safe to use with cloud APIs. The answer is: they are, if you put a privacy layer between them and the cloud.
+
+This project stands on the shoulders of some amazing open-source work:
+
+| Project | What It Is | Link |
+|---------|-----------|------|
+| **Agent Zero** | Fully autonomous AI agent framework for coding, browsing, and task execution | [github.com/frdel/agent-zero](https://github.com/frdel/agent-zero) |
+| **OpenClaw** | The open-source autonomous agent that helped spark the current AI agent wave. Its creator was hired by OpenAI. | [github.com/agentic-labs/openclaw](https://github.com/agentic-labs/openclaw) |
+| **Open WebUI** | Self-hosted web interface for LLMs, supporting multiple backends | [github.com/open-webui/open-webui](https://github.com/open-webui/open-webui) |
+| **OpenAI** | The company behind GPT-4, ChatGPT, and the API that many agents talk to | [openai.com](https://openai.com) |
+| **Anthropic** | Creators of Claude, focused on AI safety research | [anthropic.com](https://anthropic.com) |
+| **Google Gemini** | Google's multimodal AI models and API | [ai.google.dev](https://ai.google.dev) |
+
+If you use any of these tools with cloud APIs, consider putting iTaK Shield in front of them.
 
 ---
 
