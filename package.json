@@ -6,7 +6,7 @@
     "author": "David Patton",
     "repository": {
         "type": "git",
-        "url": "https://github.com/David2024patton/itak-shield"
+        "url": "git+https://github.com/David2024patton/itak-shield.git"
     },
     "homepage": "https://github.com/David2024patton/itak-shield#readme",
     "bugs": {
@@ -40,7 +40,6 @@
     ],
     "files": [
         "bin/",
-        "dist/",
         "install.js",
         "README.md",
         "LICENSE"
