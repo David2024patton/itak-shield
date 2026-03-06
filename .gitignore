@@ -1,10 +1,8 @@
-# Binaries
-*.exe
+# Binaries (local dev only)
 *.exe~
 *.dll
 *.so
 *.dylib
-itak-shield
 
 # Test binary
 *.test
@@ -21,3 +19,11 @@ itak-shield
 # OS
 .DS_Store
 Thumbs.db
+
+# npm
+node_modules/
+
+# Local dev binaries (dist/ is tracked for npm)
+itak-shield
+goproxy.exe
+itak-shield.exe

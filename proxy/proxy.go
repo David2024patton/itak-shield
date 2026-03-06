@@ -9,18 +9,45 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/David2024patton/itak-shield/scanner"
 	"github.com/David2024patton/itak-shield/tokenizer"
 )
 
-// Server is the GOProxy privacy-aware reverse proxy.
+// LogEntry represents a single proxy activity event.
+type LogEntry struct {
+	Time    time.Time
+	Type    string
+	Message string
+}
+
+// LiveStatsResult holds the current proxy stats for the GUI.
+type LiveStatsResult struct {
+	Requests   int64
+	Redacted   int64
+	RecentLogs []LogEntry
+}
+
+// Server is the iTaK Shield privacy-aware reverse proxy.
 type Server struct {
 	target    *url.URL
 	scanner   *scanner.Scanner
 	tokenizer *tokenizer.TokenMap
 	verbose   bool
+
+	// Thread-safe counters for the GUI dashboard.
+	requestCount  atomic.Int64
+	redactedCount atomic.Int64
+
+	// Recent activity log (ring buffer).
+	logMu      sync.Mutex
+	recentLogs []LogEntry
 }
+
+const maxLogEntries = 50
 
 // New creates a new proxy server targeting the given upstream API URL.
 func New(targetURL string, verbose bool) (*Server, error) {
@@ -30,11 +57,43 @@ func New(targetURL string, verbose bool) (*Server, error) {
 	}
 
 	return &Server{
-		target:    u,
-		scanner:   scanner.New(),
-		tokenizer: tokenizer.New(),
-		verbose:   verbose,
+		target:     u,
+		scanner:    scanner.New(),
+		tokenizer:  tokenizer.New(),
+		verbose:    verbose,
+		recentLogs: make([]LogEntry, 0, maxLogEntries),
 	}, nil
+}
+
+// LiveStats returns the current request/redaction counts and recent log entries.
+func (s *Server) LiveStats() LiveStatsResult {
+	s.logMu.Lock()
+	logs := make([]LogEntry, len(s.recentLogs))
+	copy(logs, s.recentLogs)
+	s.logMu.Unlock()
+
+	return LiveStatsResult{
+		Requests:   s.requestCount.Load(),
+		Redacted:   s.redactedCount.Load(),
+		RecentLogs: logs,
+	}
+}
+
+// addLog appends a log entry to the ring buffer.
+func (s *Server) addLog(logType, message string) {
+	entry := LogEntry{
+		Time:    time.Now(),
+		Type:    logType,
+		Message: message,
+	}
+	s.logMu.Lock()
+	defer s.logMu.Unlock()
+
+	if len(s.recentLogs) >= maxLogEntries {
+		// Shift older entries out.
+		s.recentLogs = s.recentLogs[1:]
+	}
+	s.recentLogs = append(s.recentLogs, entry)
 }
 
 // ServeHTTP handles incoming requests by:
@@ -44,6 +103,9 @@ func New(targetURL string, verbose bool) (*Server, error) {
 // 4. Reading the response and restoring tokens to real values
 // 5. Returning the de-tokenized response to the caller
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Increment request counter.
+	s.requestCount.Add(1)
+
 	// Read the request body.
 	var bodyBytes []byte
 	if r.Body != nil {
@@ -63,6 +125,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	bodyStr := string(bodyBytes)
 	matches := s.scanner.Scan(bodyStr)
 	redacted, count := s.tokenizer.Redact(bodyStr, matches)
+
+	// Track redacted count.
+	if count > 0 {
+		s.redactedCount.Add(int64(count))
+		s.addLog("REDACT", fmt.Sprintf("Redacted %d PII item(s)", count))
+	}
 
 	if s.verbose && count > 0 {
 		log.Printf("[iTaK Shield] Redacted %d PII item(s) from request", count)
@@ -100,6 +168,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	client := &http.Client{}
 	resp, err := client.Do(upReq)
 	if err != nil {
+		s.addLog("ERROR", fmt.Sprintf("Upstream failed: %v", err))
 		http.Error(w, fmt.Sprintf("upstream request failed: %v", err), http.StatusBadGateway)
 		return
 	}
@@ -128,6 +197,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if s.verbose && count > 0 {
 		log.Printf("[iTaK Shield] Restored tokens in response (%d bytes)", len(restored))
+	}
+
+	if count > 0 {
+		s.addLog("RESTORE", fmt.Sprintf("Restored %d token(s) in response (%d bytes)", count, len(restored)))
+	} else {
+		s.addLog("PASS", fmt.Sprintf("Proxied %s %s (%d bytes)", r.Method, r.URL.Path, len(restored)))
 	}
 
 	// Copy response headers.

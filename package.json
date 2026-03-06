@@ -1,0 +1,48 @@
+{
+    "name": "itak-shield",
+    "version": "0.1.0",
+    "description": "Privacy-first proxy for AI agents. Detects and redacts PII before it reaches cloud APIs.",
+    "license": "MIT",
+    "author": "David Patton",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/David2024patton/itak-shield"
+    },
+    "homepage": "https://github.com/David2024patton/itak-shield#readme",
+    "bugs": {
+        "url": "https://github.com/David2024patton/itak-shield/issues"
+    },
+    "keywords": [
+        "privacy",
+        "pii",
+        "redaction",
+        "proxy",
+        "ai",
+        "llm",
+        "openai",
+        "security",
+        "data-protection"
+    ],
+    "bin": {
+        "itak-shield": "bin/itak-shield"
+    },
+    "scripts": {
+        "postinstall": "node install.js"
+    },
+    "os": [
+        "win32",
+        "darwin",
+        "linux"
+    ],
+    "cpu": [
+        "x64",
+        "arm64"
+    ],
+    "files": [
+        "bin/",
+        "dist/",
+        "install.js",
+        "README.md",
+        "LICENSE"
+    ]
+}

@@ -1,0 +1,10 @@
+.git
+.gitignore
+dist/
+*.exe
+node_modules/
+bin/
+package.json
+install.js
+*.md
+*.ps1
