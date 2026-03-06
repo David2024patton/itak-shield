@@ -132,3 +132,61 @@ func TestScanNoFalsePositives(t *testing.T) {
 	}
 	t.Logf("No false positives: PASSED")
 }
+
+func TestAddCustomRule(t *testing.T) {
+	s := New()
+	err := s.AddCustomRule("EMPLOYEE_ID", `EMP-\d{6}`)
+	if err != nil {
+		t.Fatalf("AddCustomRule failed: %v", err)
+	}
+
+	matches := s.Scan("Employee EMP-123456 is on leave")
+	found := false
+	for _, m := range matches {
+		if m.Type == "EMPLOYEE_ID" && m.Value == "EMP-123456" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("failed to detect custom EMPLOYEE_ID pattern")
+	}
+	t.Logf("Custom rule: PASSED")
+}
+
+func TestAddCustomRuleInvalidPattern(t *testing.T) {
+	s := New()
+	err := s.AddCustomRule("BAD", "[invalid")
+	if err == nil {
+		t.Error("expected error for invalid regex pattern")
+	}
+	t.Logf("Invalid pattern rejection: PASSED")
+}
+
+func TestDisableRule(t *testing.T) {
+	s := New()
+
+	// IP should be detected before disabling.
+	matches := s.Scan("Server at 192.168.1.100 is down")
+	found := false
+	for _, m := range matches {
+		if m.Type == PIIIPAddress {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("IP should be detected before disabling")
+	}
+
+	// Disable IP detection.
+	s.DisableRule("IP_ADDR")
+
+	matches = s.Scan("Server at 192.168.1.100 is down")
+	for _, m := range matches {
+		if m.Type == PIIIPAddress {
+			t.Error("IP should NOT be detected after disabling")
+		}
+	}
+	t.Logf("Disable rule: PASSED")
+}

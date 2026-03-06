@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/David2024patton/itak-shield/audit"
 	"github.com/David2024patton/itak-shield/scanner"
 	"github.com/David2024patton/itak-shield/tokenizer"
 )
@@ -31,6 +32,32 @@ type LiveStatsResult struct {
 	RecentLogs []LogEntry
 }
 
+// Option configures the proxy server.
+type Option func(*Server) error
+
+// WithCustomRule adds an organization-specific PII detection pattern.
+func WithCustomRule(name, pattern string) Option {
+	return func(s *Server) error {
+		return s.scanner.AddCustomRule(name, pattern)
+	}
+}
+
+// WithDisabledRule disables a built-in PII detection rule.
+func WithDisabledRule(name string) Option {
+	return func(s *Server) error {
+		s.scanner.DisableRule(name)
+		return nil
+	}
+}
+
+// WithAuditLogger attaches a structured audit logger to the proxy.
+func WithAuditLogger(logger *audit.Logger) Option {
+	return func(s *Server) error {
+		s.auditLogger = logger
+		return nil
+	}
+}
+
 // Server is the iTaK Shield privacy-aware reverse proxy.
 type Server struct {
 	target    *url.URL
@@ -45,24 +72,37 @@ type Server struct {
 	// Recent activity log (ring buffer).
 	logMu      sync.Mutex
 	recentLogs []LogEntry
+
+	// Enterprise: structured audit logger (nil-safe).
+	auditLogger *audit.Logger
 }
 
 const maxLogEntries = 50
 
 // New creates a new proxy server targeting the given upstream API URL.
-func New(targetURL string, verbose bool) (*Server, error) {
+// Accepts optional functional options for enterprise configuration.
+func New(targetURL string, verbose bool, opts ...Option) (*Server, error) {
 	u, err := url.Parse(targetURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid target URL %q: %w", targetURL, err)
 	}
 
-	return &Server{
+	s := &Server{
 		target:     u,
 		scanner:    scanner.New(),
 		tokenizer:  tokenizer.New(),
 		verbose:    verbose,
 		recentLogs: make([]LogEntry, 0, maxLogEntries),
-	}, nil
+	}
+
+	// Apply enterprise options.
+	for _, opt := range opts {
+		if err := opt(s); err != nil {
+			return nil, fmt.Errorf("proxy option error: %w", err)
+		}
+	}
+
+	return s, nil
 }
 
 // LiveStats returns the current request/redaction counts and recent log entries.
@@ -140,6 +180,38 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Enterprise: structured audit logging (metadata only, never PII).
+	if count > 0 {
+		var piiTypes []string
+		for _, m := range matches {
+			piiTypes = append(piiTypes, string(m.Type))
+		}
+		// Deduplicate types.
+		seen := make(map[string]bool)
+		var unique []string
+		for _, t := range piiTypes {
+			if !seen[t] {
+				seen[t] = true
+				unique = append(unique, t)
+			}
+		}
+		s.auditLogger.Log(audit.Event{
+			EventType: "redact",
+			Items:     count,
+			Types:     unique,
+			Method:    r.Method,
+			Path:      r.URL.Path,
+			Source:    r.RemoteAddr,
+		})
+	} else {
+		s.auditLogger.Log(audit.Event{
+			EventType: "pass",
+			Method:    r.Method,
+			Path:      r.URL.Path,
+			Source:    r.RemoteAddr,
+		})
+	}
+
 	// Build the upstream request.
 	upstreamURL := *s.target
 	upstreamURL.Path = r.URL.Path
@@ -169,6 +241,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	resp, err := client.Do(upReq)
 	if err != nil {
 		s.addLog("ERROR", fmt.Sprintf("Upstream failed: %v", err))
+		s.auditLogger.Log(audit.Event{
+			EventType: "error",
+			Message:   fmt.Sprintf("Upstream failed: %v", err),
+			Method:    r.Method,
+			Path:      r.URL.Path,
+		})
 		http.Error(w, fmt.Sprintf("upstream request failed: %v", err), http.StatusBadGateway)
 		return
 	}

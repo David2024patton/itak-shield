@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"fmt"
 	"regexp"
 	"sort"
 )
@@ -38,11 +39,14 @@ type pattern struct {
 // Scanner detects PII in text using compiled regex patterns.
 type Scanner struct {
 	patterns []pattern
+	disabled map[string]bool // disabled rule names
 }
 
 // New creates a Scanner with all default PII detection patterns.
 func New() *Scanner {
-	s := &Scanner{}
+	s := &Scanner{
+		disabled: make(map[string]bool),
+	}
 
 	// Order matters: more specific patterns first to avoid partial matches.
 	s.add(PIISSN, `\b\d{3}-\d{2}-\d{4}\b`)
@@ -75,6 +79,29 @@ func New() *Scanner {
 	return s
 }
 
+// AddCustomRule adds an organization-specific PII detection pattern.
+// The name becomes the PIIType (e.g. "EMPLOYEE_ID").
+func (s *Scanner) AddCustomRule(name, pattern string) error {
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return fmt.Errorf("invalid pattern for %s: %w", name, err)
+	}
+	s.patterns = append(s.patterns, struct {
+		Type PIIType
+		Re   *regexp.Regexp
+	}{
+		Type: PIIType(name),
+		Re:   re,
+	})
+	return nil
+}
+
+// DisableRule disables a built-in rule by PII type name.
+// Use this to suppress false positives in specific environments.
+func (s *Scanner) DisableRule(name string) {
+	s.disabled[name] = true
+}
+
 func (s *Scanner) add(piiType PIIType, pattern string) {
 	s.patterns = append(s.patterns, struct {
 		Type PIIType
@@ -92,6 +119,10 @@ func (s *Scanner) Scan(text string) []Match {
 	seen := make(map[string]bool) // deduplicate overlapping matches
 
 	for _, p := range s.patterns {
+		// Skip disabled rules.
+		if s.disabled[string(p.Type)] {
+			continue
+		}
 		locs := p.Re.FindAllStringIndex(text, -1)
 		for _, loc := range locs {
 			value := text[loc[0]:loc[1]]

@@ -1,0 +1,40 @@
+# iTaK Shield - Enterprise Configuration
+# Copy this file to shield.yaml and customize for your organization.
+# All settings are optional - defaults work for personal use.
+
+# Network binding (default: 127.0.0.1 for personal use)
+# Set to 0.0.0.0 to serve multiple developer machines
+listen: 127.0.0.1
+
+# Default upstream API target (can be overridden via GUI or CLI)
+# target: https://api.openai.com
+
+# Show detailed redaction logs in console
+verbose: false
+
+# Structured audit logging for compliance (SIEM/Splunk/ELK)
+audit:
+  enabled: false
+  path: audit.jsonl      # JSON Lines format, one event per line
+  max_size_mb: 100        # rotate after 100MB
+  max_files: 10           # keep 10 rotated log files
+
+# PII detection rules
+rules:
+  # Add organization-specific patterns
+  custom: []
+    # - name: EMPLOYEE_ID
+    #   pattern: 'EMP-\d{6}'
+    # - name: INTERNAL_PROJECT
+    #   pattern: 'PROJ-[A-Z]{3}-\d{4}'
+    # - name: BADGE_NUMBER
+    #   pattern: 'BADGE-\d{8}'
+
+  # Disable built-in rules that cause false positives
+  disabled: []
+    # - PATH          # don't flag file paths in dev environments
+    # - IP_ADDR       # internal IPs are fine in your org
+
+# Health check endpoint (GET /healthz)
+health:
+  enabled: true

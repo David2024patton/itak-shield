@@ -25,6 +25,7 @@ type GUIServer struct {
 	startTime   time.Time
 	listener    net.Listener
 	stopChan    chan struct{}
+	version     string
 }
 
 // LogEntry represents a single activity log entry for the GUI.
@@ -53,8 +54,8 @@ type StatusResponse struct {
 }
 
 // NewGUI creates a new GUI server.
-func NewGUI() *GUIServer {
-	return &GUIServer{}
+func NewGUI(version string) *GUIServer {
+	return &GUIServer{version: version}
 }
 
 // Serve starts the GUI server on the given port, serving the embedded web content.
@@ -72,6 +73,7 @@ func (g *GUIServer) Serve(webFS embed.FS, guiPort int) error {
 	mux.HandleFunc("/api/stop", g.handleStop)
 	mux.HandleFunc("/api/status", g.handleStatus)
 	mux.HandleFunc("/api/providers", g.handleProviders)
+	mux.HandleFunc("/healthz", g.handleHealth)
 
 	// Static files (the embedded web UI)
 	fileServer := http.FileServer(http.FS(subFS))
@@ -215,6 +217,22 @@ func (g *GUIServer) handleProviders(w http.ResponseWriter, r *http.Request) {
 		{"id": "gemini", "name": "Google Gemini", "url": "https://generativelanguage.googleapis.com"},
 	}
 	writeJSON(w, providers)
+}
+
+// handleHealth returns a health check response for load balancers and k8s probes.
+func (g *GUIServer) handleHealth(w http.ResponseWriter, r *http.Request) {
+	g.mu.Lock()
+	var uptimeSeconds int64
+	if g.running {
+		uptimeSeconds = int64(time.Since(g.startTime).Seconds())
+	}
+	g.mu.Unlock()
+
+	writeJSON(w, map[string]interface{}{
+		"status":         "ok",
+		"version":        g.version,
+		"uptime_seconds": uptimeSeconds,
+	})
 }
 
 // convertLogs converts proxy log entries to GUI log entries.
