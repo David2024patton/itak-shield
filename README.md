@@ -201,8 +201,8 @@ go install github.com/David2024patton/itak-shield@latest
 #### Docker (Any Platform)
 
 ```bash
-docker run --rm -p 8080:8080 david2024patton/itak-shield \
-  --target https://api.openai.com --port 8080
+docker run --rm -p 20979:20979 david2024patton/itak-shield \
+  --target https://api.openai.com --port 20979
 ```
 
 ---
@@ -217,23 +217,23 @@ Open a terminal and start iTaK Shield pointing at your AI provider:
 
 ```bash
 # For OpenAI
-itak-shield --target https://api.openai.com --port 8080 --verbose
+itak-shield --target https://api.openai.com --port 20979 --verbose
 
 # For Google Gemini
-itak-shield --target https://generativelanguage.googleapis.com --port 8080 --verbose
+itak-shield --target https://generativelanguage.googleapis.com --port 20979 --verbose
 
 # For Anthropic
-itak-shield --target https://api.anthropic.com --port 8080 --verbose
+itak-shield --target https://api.anthropic.com --port 20979 --verbose
 ```
 
 You should see:
 
 ```
 ┌─────────────────────────────────────────────┐
-│           iTaK Shield v0.1.0                │
+│           iTaK Shield v0.2.0                │
 │         Privacy-First LLM Proxy             │
 ├─────────────────────────────────────────────┤
-│  Listening:  http://127.0.0.1:8080         │
+│  Listening:  http://127.0.0.1:20979         │
 │  Upstream:   https://api.openai.com         │
 │  Verbose:    true                           │
 ├─────────────────────────────────────────────┤
@@ -247,7 +247,7 @@ You should see:
 Open a second terminal and send a test message:
 
 ```bash
-curl http://127.0.0.1:8080/v1/chat/completions \
+curl http://127.0.0.1:20979/v1/chat/completions \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -283,7 +283,7 @@ That means it's working. The email and IP were replaced before leaving your mach
 1. Start iTaK Shield pointing at your LLM provider:
 
 ```bash
-itak-shield --target https://api.openai.com --port 8080
+itak-shield --target https://api.openai.com --port 20979
 ```
 
 2. In Agent Zero's settings, change the API base URL:
@@ -293,7 +293,7 @@ itak-shield --target https://api.openai.com --port 8080
 API_URL=https://api.openai.com
 
 # After (through iTaK Shield):
-API_URL=http://127.0.0.1:8080
+API_URL=http://127.0.0.1:20979
 ```
 
 3. Use Agent Zero normally. All requests are now automatically sanitized.
@@ -305,7 +305,7 @@ API_URL=http://127.0.0.1:8080
 1. Start iTaK Shield:
 
 ```bash
-itak-shield --target https://api.openai.com --port 8080
+itak-shield --target https://api.openai.com --port 20979
 ```
 
 2. In your OpenClaw configuration, update the API endpoint:
@@ -315,7 +315,7 @@ itak-shield --target https://api.openai.com --port 8080
 api_base: https://api.openai.com
 
 # After (through iTaK Shield):
-api_base: http://127.0.0.1:8080
+api_base: http://127.0.0.1:20979
 ```
 
 3. Run OpenClaw as you normally would. iTaK Shield intercepts and sanitizes every request transparently.
@@ -327,13 +327,13 @@ api_base: http://127.0.0.1:8080
 1. Start iTaK Shield:
 
 ```bash
-itak-shield --target https://api.openai.com --port 8080
+itak-shield --target https://api.openai.com --port 20979
 ```
 
 2. In Open WebUI's settings, go to **Connections** and set the OpenAI API URL to:
 
 ```
-http://127.0.0.1:8080
+http://127.0.0.1:20979
 ```
 
 3. Keep your API key the same. iTaK Shield passes it through unchanged.
@@ -348,7 +348,7 @@ from openai import OpenAI
 # Point the client at iTaK Shield instead of OpenAI directly
 client = OpenAI(
     api_key="your-api-key",
-    base_url="http://127.0.0.1:8080/v1"  # iTaK Shield
+    base_url="http://127.0.0.1:20979/v1"  # iTaK Shield
 )
 
 response = client.chat.completions.create(
@@ -363,7 +363,7 @@ print(response.choices[0].message.content)
 ### With curl
 
 ```bash
-curl http://127.0.0.1:8080/v1/chat/completions \
+curl http://127.0.0.1:20979/v1/chat/completions \
   -H "Authorization: Bearer $OPENAI_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -390,16 +390,16 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 
 ```bash
 # Basic usage
-itak-shield --target https://api.openai.com --port 8080
+itak-shield --target https://api.openai.com --port 20979
 
 # With logging to see what's being redacted
-itak-shield --target https://api.openai.com --port 8080 --verbose
+itak-shield --target https://api.openai.com --port 20979 --verbose
 
 # Proxy Anthropic
-itak-shield --target https://api.anthropic.com --port 8080
+itak-shield --target https://api.anthropic.com --port 20979
 
 # Proxy Google Gemini
-itak-shield --target https://generativelanguage.googleapis.com --port 8080
+itak-shield --target https://generativelanguage.googleapis.com --port 20979
 
 # Check version
 itak-shield --version

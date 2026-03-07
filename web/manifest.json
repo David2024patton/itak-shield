@@ -1,0 +1,30 @@
+{
+    "name": "iTaK Shield",
+    "short_name": "iTaK Shield",
+    "description": "Privacy-first proxy for AI agents. Protects your personal data when using cloud AI services.",
+    "start_url": "/",
+    "scope": "/",
+    "display": "standalone",
+    "theme_color": "#0d1117",
+    "background_color": "#0d1117",
+    "orientation": "any",
+    "icons": [
+        {
+            "src": "/icons/shield-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "any maskable"
+        },
+        {
+            "src": "/icons/shield-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "any maskable"
+        }
+    ],
+    "categories": [
+        "utilities",
+        "security",
+        "developer"
+    ]
+}

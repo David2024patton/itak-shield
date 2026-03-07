@@ -3,7 +3,7 @@
 
 $ErrorActionPreference = "Stop"
 
-$version = "0.1.0"
+$version = "0.2.0"
 $distDir = "dist"
 $module = "github.com/David2024patton/itak-shield"
 

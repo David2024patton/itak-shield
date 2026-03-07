@@ -8,9 +8,12 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/David2024patton/itak-shield/auth"
 	"github.com/David2024patton/itak-shield/proxy"
 )
 
@@ -26,6 +29,8 @@ type GUIServer struct {
 	listener    net.Listener
 	stopChan    chan struct{}
 	version     string
+	bindAddr    string
+	authMgr     *auth.Manager
 }
 
 // LogEntry represents a single activity log entry for the GUI.
@@ -44,18 +49,27 @@ type StartRequest struct {
 
 // StatusResponse is the JSON body for GET /api/status.
 type StatusResponse struct {
-	Running       bool       `json:"running"`
-	Target        string     `json:"target"`
-	Port          int        `json:"port"`
-	Requests      int64      `json:"requests"`
-	Redacted      int64      `json:"redacted"`
-	UptimeSeconds int64      `json:"uptime_seconds"`
-	RecentLogs    []LogEntry `json:"recent_logs"`
+	Running       bool            `json:"running"`
+	Target        string          `json:"target"`
+	Port          int             `json:"port"`
+	Requests      int64           `json:"requests"`
+	Redacted      int64           `json:"redacted"`
+	UptimeSeconds int64           `json:"uptime_seconds"`
+	RecentLogs    []LogEntry      `json:"recent_logs"`
+	Features      map[string]bool `json:"features,omitempty"`
 }
 
 // NewGUI creates a new GUI server.
-func NewGUI(version string) *GUIServer {
-	return &GUIServer{version: version}
+func NewGUI(version string, bindAddr string) *GUIServer {
+	if bindAddr == "" {
+		bindAddr = "127.0.0.1"
+	}
+
+	// Initialize auth manager with persistent file store.
+	store := auth.NewFileStore(filepath.Join(".", "shield-users.json"))
+	authMgr := auth.New(store, "")
+
+	return &GUIServer{version: version, bindAddr: bindAddr, authMgr: authMgr}
 }
 
 // Serve starts the GUI server on the given port, serving the embedded web content.
@@ -72,14 +86,21 @@ func (g *GUIServer) Serve(webFS embed.FS, guiPort int) error {
 	mux.HandleFunc("/api/start", g.handleStart)
 	mux.HandleFunc("/api/stop", g.handleStop)
 	mux.HandleFunc("/api/status", g.handleStatus)
+	mux.HandleFunc("/api/analytics", g.handleAnalytics)
 	mux.HandleFunc("/api/providers", g.handleProviders)
 	mux.HandleFunc("/healthz", g.handleHealth)
+
+	// User & token management
+	mux.HandleFunc("/api/users", g.handleUsers)
+	mux.HandleFunc("/api/users/", g.handleUserByID)
+	mux.HandleFunc("/api/tokens", g.handleTokens)
+	mux.HandleFunc("/api/tokens/revoke", g.handleRevokeToken)
 
 	// Static files (the embedded web UI)
 	fileServer := http.FileServer(http.FS(subFS))
 	mux.Handle("/", fileServer)
 
-	addr := fmt.Sprintf("127.0.0.1:%d", guiPort)
+	addr := fmt.Sprintf("%s:%d", g.bindAddr, guiPort)
 	log.Printf("iTaK Shield GUI ready at http://%s", addr)
 
 	return http.ListenAndServe(addr, mux)
@@ -103,7 +124,7 @@ func (g *GUIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Port < 1024 || req.Port > 65535 {
-		req.Port = 8080
+		req.Port = 20979
 	}
 
 	g.mu.Lock()
@@ -122,7 +143,7 @@ func (g *GUIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Bind to the proxy port.
-	proxyAddr := fmt.Sprintf("127.0.0.1:%d", req.Port)
+	proxyAddr := fmt.Sprintf("%s:%d", g.bindAddr, req.Port)
 	ln, err := net.Listen("tcp", proxyAddr)
 	if err != nil {
 		writeJSON(w, map[string]interface{}{"ok": false, "error": fmt.Sprintf("Port %d is already in use", req.Port)})
@@ -204,17 +225,82 @@ func (g *GUIServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 		resp.Redacted = stats.Redacted
 		resp.UptimeSeconds = int64(time.Since(g.startTime).Seconds())
 		resp.RecentLogs = convertLogs(stats.RecentLogs)
+		resp.Features = map[string]bool{
+			"auth":  stats.Features.Auth,
+			"cache": stats.Features.Cache,
+			"retry": stats.Features.Retry,
+			"spend": stats.Features.Spend,
+			"dlp":   stats.Features.DLP,
+		}
 	}
 
 	writeJSON(w, resp)
 }
 
+// handleAnalytics returns enterprise feature analytics data.
+func (g *GUIServer) handleAnalytics(w http.ResponseWriter, r *http.Request) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	if !g.running || g.proxy == nil {
+		writeJSON(w, map[string]interface{}{"active": false})
+		return
+	}
+
+	stats := g.proxy.LiveStats()
+	result := map[string]interface{}{
+		"active":   true,
+		"features": stats.Features,
+	}
+
+	if stats.CacheStats != nil {
+		result["cache"] = stats.CacheStats
+	}
+	if stats.SpendStats != nil {
+		result["spend"] = stats.SpendStats
+	}
+	if stats.AuthUsers != nil {
+		result["auth_users"] = stats.AuthUsers
+	}
+
+	writeJSON(w, result)
+}
+
 // handleProviders returns the list of preset providers.
 func (g *GUIServer) handleProviders(w http.ResponseWriter, r *http.Request) {
 	providers := []map[string]string{
+		// Foundation Models
 		{"id": "openai", "name": "OpenAI", "url": "https://api.openai.com"},
 		{"id": "anthropic", "name": "Anthropic", "url": "https://api.anthropic.com"},
 		{"id": "gemini", "name": "Google Gemini", "url": "https://generativelanguage.googleapis.com"},
+		{"id": "xai", "name": "xAI (Grok)", "url": "https://api.x.ai"},
+		{"id": "deepseek", "name": "DeepSeek", "url": "https://api.deepseek.com"},
+		{"id": "mistral", "name": "Mistral AI", "url": "https://api.mistral.ai"},
+		{"id": "cohere", "name": "Cohere", "url": "https://api.cohere.com"},
+		{"id": "nvidia", "name": "NVIDIA NIM", "url": "https://integrate.api.nvidia.com"},
+		{"id": "qwen", "name": "Qwen (Alibaba)", "url": "https://dashscope.aliyuncs.com/compatible-mode"},
+		{"id": "kimi", "name": "Kimi (Moonshot)", "url": "https://api.moonshot.cn"},
+		{"id": "zhipu", "name": "Zhipu AI (GLM)", "url": "https://open.bigmodel.cn/api/paas"},
+		{"id": "meta", "name": "Meta AI (Llama)", "url": "https://api.llama.com"},
+
+		// API Gateways
+		{"id": "openrouter", "name": "OpenRouter", "url": "https://openrouter.ai/api"},
+		{"id": "groq", "name": "Groq", "url": "https://api.groq.com/openai"},
+		{"id": "together", "name": "Together AI", "url": "https://api.together.xyz"},
+		{"id": "fireworks", "name": "Fireworks AI", "url": "https://api.fireworks.ai/inference"},
+		{"id": "huggingface", "name": "Hugging Face", "url": "https://api-inference.huggingface.co"},
+		{"id": "deepinfra", "name": "DeepInfra", "url": "https://api.deepinfra.com/v1/openai"},
+		{"id": "siliconflow", "name": "SiliconFlow", "url": "https://api.siliconflow.cn"},
+
+		// Specialized
+		{"id": "perplexity", "name": "Perplexity", "url": "https://api.perplexity.ai"},
+		{"id": "cerebras", "name": "Cerebras", "url": "https://api.cerebras.ai"},
+
+		// Local / Self-Hosted
+		{"id": "ollama", "name": "Ollama", "url": "http://localhost:11434"},
+		{"id": "lmstudio", "name": "LM Studio", "url": "http://localhost:1234/v1"},
+		{"id": "llamacpp", "name": "Llama.cpp", "url": "http://localhost:20979"},
+		{"id": "vllm", "name": "vLLM", "url": "http://localhost:8000/v1"},
 	}
 	writeJSON(w, providers)
 }
@@ -251,4 +337,149 @@ func convertLogs(logs []proxy.LogEntry) []LogEntry {
 func writeJSON(w http.ResponseWriter, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(data)
+}
+
+// ── User & Token Management Handlers ────────────────────────────
+
+// handleUsers handles GET (list) and POST (create) for /api/users.
+func (g *GUIServer) handleUsers(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		users := g.authMgr.ListUsers()
+		if users == nil {
+			users = []auth.User{}
+		}
+		writeJSON(w, users)
+
+	case http.MethodPost:
+		var req struct {
+			Name      string `json:"name"`
+			Email     string `json:"email"`
+			Group     string `json:"group"`
+			RateLimit int    `json:"rate_limit"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": "Invalid request body"})
+			return
+		}
+		if req.Name == "" {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": "Name is required"})
+			return
+		}
+		if req.Group == "" {
+			req.Group = "default"
+		}
+
+		user, err := g.authMgr.CreateUser(req.Name, req.Email, req.Group, req.RateLimit)
+		if err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+			return
+		}
+
+		log.Printf("[iTaK Shield] User created: %s (%s)", user.Name, user.ID)
+		writeJSON(w, map[string]interface{}{"ok": true, "user": user})
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleUserByID handles GET and DELETE for /api/users/{id}.
+func (g *GUIServer) handleUserByID(w http.ResponseWriter, r *http.Request) {
+	// Extract user ID from URL path: /api/users/{id}
+	userID := strings.TrimPrefix(r.URL.Path, "/api/users/")
+	if userID == "" {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": "User ID required"})
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		user, err := g.authMgr.GetUser(userID)
+		if err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+			return
+		}
+		writeJSON(w, user)
+
+	case http.MethodDelete:
+		if err := g.authMgr.DeleteUser(userID); err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+			return
+		}
+		log.Printf("[iTaK Shield] User deleted: %s", userID)
+		writeJSON(w, map[string]interface{}{"ok": true})
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleTokens generates a new API token for a user (POST).
+func (g *GUIServer) handleTokens(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		UserID    string `json:"user_id"`
+		Label     string `json:"label"`
+		ExpiresIn *int   `json:"expires_in"` // hours, nil = never
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": "Invalid request body"})
+		return
+	}
+	if req.UserID == "" {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": "user_id is required"})
+		return
+	}
+	if req.Label == "" {
+		req.Label = "api-key"
+	}
+
+	var expiresAt *time.Time
+	if req.ExpiresIn != nil && *req.ExpiresIn > 0 {
+		t := time.Now().Add(time.Duration(*req.ExpiresIn) * time.Hour)
+		expiresAt = &t
+	}
+
+	token, err := g.authMgr.GenerateToken(req.UserID, req.Label, expiresAt)
+	if err != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+		return
+	}
+
+	log.Printf("[iTaK Shield] Token generated for user %s: %s", req.UserID, req.Label)
+	writeJSON(w, map[string]interface{}{"ok": true, "token": token})
+}
+
+// handleRevokeToken revokes a specific token (POST).
+func (g *GUIServer) handleRevokeToken(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		UserID   string `json:"user_id"`
+		TokenKey string `json:"token_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": "Invalid request body"})
+		return
+	}
+	if req.UserID == "" || req.TokenKey == "" {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": "user_id and token_key are required"})
+		return
+	}
+
+	if err := g.authMgr.RevokeToken(req.UserID, req.TokenKey); err != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+		return
+	}
+
+	log.Printf("[iTaK Shield] Token revoked for user %s", req.UserID)
+	writeJSON(w, map[string]interface{}{"ok": true})
 }

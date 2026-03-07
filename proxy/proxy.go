@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"compress/gzip"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -14,7 +15,12 @@ import (
 	"time"
 
 	"github.com/David2024patton/itak-shield/audit"
+	"github.com/David2024patton/itak-shield/auth"
+	"github.com/David2024patton/itak-shield/cache"
+	"github.com/David2024patton/itak-shield/dlp"
+	"github.com/David2024patton/itak-shield/retry"
 	"github.com/David2024patton/itak-shield/scanner"
+	"github.com/David2024patton/itak-shield/spend"
 	"github.com/David2024patton/itak-shield/tokenizer"
 )
 
@@ -27,9 +33,22 @@ type LogEntry struct {
 
 // LiveStatsResult holds the current proxy stats for the GUI.
 type LiveStatsResult struct {
-	Requests   int64
-	Redacted   int64
-	RecentLogs []LogEntry
+	Requests   int64            `json:"requests"`
+	Redacted   int64            `json:"redacted"`
+	RecentLogs []LogEntry       `json:"-"`
+	CacheStats *cache.Stats     `json:"cache_stats,omitempty"`
+	SpendStats *spend.Stats     `json:"spend_stats,omitempty"`
+	AuthUsers  map[string]int64 `json:"auth_users,omitempty"`
+	Features   FeatureFlags     `json:"features"`
+}
+
+// FeatureFlags indicates which enterprise features are active.
+type FeatureFlags struct {
+	Auth  bool `json:"auth"`
+	Cache bool `json:"cache"`
+	Retry bool `json:"retry"`
+	Spend bool `json:"spend"`
+	DLP   bool `json:"dlp"`
 }
 
 // Option configures the proxy server.
@@ -58,6 +77,46 @@ func WithAuditLogger(logger *audit.Logger) Option {
 	}
 }
 
+// WithAuth enables virtual API key authentication and rate limiting.
+func WithAuth(manager *auth.Manager) Option {
+	return func(s *Server) error {
+		s.authManager = manager
+		return nil
+	}
+}
+
+// WithCache enables response caching.
+func WithCache(c *cache.Cache) Option {
+	return func(s *Server) error {
+		s.cache = c
+		return nil
+	}
+}
+
+// WithRetry enables auto-retry with fallback routing.
+func WithRetry(cfg *retry.Config) Option {
+	return func(s *Server) error {
+		s.retryCfg = cfg
+		return nil
+	}
+}
+
+// WithSpend enables token tracking and budget enforcement.
+func WithSpend(tracker *spend.Tracker) Option {
+	return func(s *Server) error {
+		s.spendTracker = tracker
+		return nil
+	}
+}
+
+// WithDLP enables data loss prevention policies.
+func WithDLP(policy *dlp.Policy) Option {
+	return func(s *Server) error {
+		s.dlpPolicy = policy
+		return nil
+	}
+}
+
 // Server is the iTaK Shield privacy-aware reverse proxy.
 type Server struct {
 	target    *url.URL
@@ -73,8 +132,17 @@ type Server struct {
 	logMu      sync.Mutex
 	recentLogs []LogEntry
 
-	// Enterprise: structured audit logger (nil-safe).
-	auditLogger *audit.Logger
+	// Enterprise features (all nil-safe).
+	auditLogger  *audit.Logger
+	authManager  *auth.Manager
+	cache        *cache.Cache
+	retryCfg     *retry.Config
+	spendTracker *spend.Tracker
+	dlpPolicy    *dlp.Policy
+
+	// Per-user request tracking for analytics.
+	userStatsMu sync.Mutex
+	userStats   map[string]int64
 }
 
 const maxLogEntries = 50
@@ -93,6 +161,7 @@ func New(targetURL string, verbose bool, opts ...Option) (*Server, error) {
 		tokenizer:  tokenizer.New(),
 		verbose:    verbose,
 		recentLogs: make([]LogEntry, 0, maxLogEntries),
+		userStats:  make(map[string]int64),
 	}
 
 	// Apply enterprise options.
@@ -112,11 +181,39 @@ func (s *Server) LiveStats() LiveStatsResult {
 	copy(logs, s.recentLogs)
 	s.logMu.Unlock()
 
-	return LiveStatsResult{
+	result := LiveStatsResult{
 		Requests:   s.requestCount.Load(),
 		Redacted:   s.redactedCount.Load(),
 		RecentLogs: logs,
+		Features: FeatureFlags{
+			Auth:  s.authManager != nil && s.authManager.HasKeys(),
+			Cache: s.cache != nil,
+			Retry: s.retryCfg != nil,
+			Spend: s.spendTracker != nil,
+			DLP:   s.dlpPolicy != nil,
+		},
 	}
+
+	// Attach enterprise stats if available.
+	if s.cache != nil {
+		cs := s.cache.GetStats()
+		result.CacheStats = &cs
+	}
+	if s.spendTracker != nil {
+		ss := s.spendTracker.GetStats()
+		result.SpendStats = &ss
+	}
+	if s.authManager != nil && s.authManager.HasKeys() {
+		s.userStatsMu.Lock()
+		users := make(map[string]int64, len(s.userStats))
+		for k, v := range s.userStats {
+			users[k] = v
+		}
+		s.userStatsMu.Unlock()
+		result.AuthUsers = users
+	}
+
+	return result
 }
 
 // addLog appends a log entry to the ring buffer.
@@ -130,23 +227,75 @@ func (s *Server) addLog(logType, message string) {
 	defer s.logMu.Unlock()
 
 	if len(s.recentLogs) >= maxLogEntries {
-		// Shift older entries out.
 		s.recentLogs = s.recentLogs[1:]
 	}
 	s.recentLogs = append(s.recentLogs, entry)
 }
 
-// ServeHTTP handles incoming requests by:
-// 1. Reading the request body
-// 2. Scanning for PII and replacing with tokens
-// 3. Forwarding the sanitized request to the upstream API
-// 4. Reading the response and restoring tokens to real values
-// 5. Returning the de-tokenized response to the caller
+// trackUser increments the per-user request counter.
+func (s *Server) trackUser(user string) {
+	s.userStatsMu.Lock()
+	s.userStats[user]++
+	s.userStatsMu.Unlock()
+}
+
+// ServeHTTP handles incoming requests through the enterprise middleware pipeline:
+// 1. Auth (validate key, identify user, check rate limit)
+// 2. Read request body
+// 3. DLP (scan, check block policies)
+// 4. Cache check (return cached response if hit)
+// 5. PII redaction (existing)
+// 6. Forward with retry/fallback
+// 7. Spend tracking (parse response tokens)
+// 8. Cache store (save response)
+// 9. PII restoration (existing)
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Increment request counter.
 	s.requestCount.Add(1)
 
-	// Read the request body.
+	// ── Step 1: Authentication ────────────────
+	user := "anonymous"
+	if s.authManager != nil && s.authManager.HasKeys() {
+		identity, err := s.authManager.Authenticate(r.Header.Get("Authorization"))
+		if err != nil {
+			s.addLog("AUTH", fmt.Sprintf("Rejected: %v", err))
+			s.auditLogger.Log(audit.Event{
+				EventType: "auth_fail",
+				Message:   err.Error(),
+				Method:    r.Method,
+				Path:      r.URL.Path,
+				Source:    r.RemoteAddr,
+			})
+			writeJSONError(w, http.StatusUnauthorized, err.Error())
+			return
+		}
+		user = identity.User
+
+		// Check rate limit.
+		if err := s.authManager.CheckRateLimit(user); err != nil {
+			s.addLog("RATE", fmt.Sprintf("Rate limited: %s", user))
+			writeJSONError(w, http.StatusTooManyRequests, err.Error())
+			return
+		}
+
+		// Check spend budget before processing.
+		if s.spendTracker != nil {
+			s.spendTracker.SetUserGroup(user, identity.Group)
+			if err := s.spendTracker.CheckBudget(user); err != nil {
+				s.addLog("BUDGET", fmt.Sprintf("Budget exceeded: %s", user))
+				writeJSONError(w, http.StatusPaymentRequired, err.Error())
+				return
+			}
+		}
+
+		// Inject the real upstream API key (replace the virtual key).
+		if injectKey := s.authManager.InjectKey(); injectKey != "" {
+			r.Header.Set("Authorization", "Bearer "+injectKey)
+		}
+	}
+
+	s.trackUser(user)
+
+	// ── Step 2: Read request body ────────────
 	var bodyBytes []byte
 	if r.Body != nil {
 		var err error
@@ -158,15 +307,53 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Reset tokenizer for each request to prevent cross-contamination.
+	// ── Step 3: Scan for PII ─────────────────
 	s.tokenizer.Reset()
-
-	// Scan and redact PII from the request body.
 	bodyStr := string(bodyBytes)
 	matches := s.scanner.Scan(bodyStr)
+
+	// ── Step 3b: DLP policy check ────────────
+	if s.dlpPolicy != nil && len(matches) > 0 {
+		result := s.dlpPolicy.Evaluate(matches)
+		if result.Blocked {
+			s.addLog("DLP", result.Message)
+			s.auditLogger.Log(audit.Event{
+				EventType: "dlp_block",
+				Message:   result.Message,
+				Types:     result.BlockedTypes,
+				Method:    r.Method,
+				Path:      r.URL.Path,
+				Source:    r.RemoteAddr,
+			})
+			writeJSONError(w, http.StatusForbidden, result.Message)
+			return
+		}
+	}
+
+	// ── Step 4: Cache check ──────────────────
+	cacheKey := ""
+	if s.cache != nil {
+		cacheKey = cache.Hash(bodyBytes)
+		if cached := s.cache.Get(cacheKey); cached != nil {
+			s.addLog("CACHE", fmt.Sprintf("Cache hit for %s %s", r.Method, r.URL.Path))
+			// Restore PII in cached response.
+			restored := s.tokenizer.Restore(string(cached.Body))
+			for key, values := range cached.Headers {
+				for _, v := range values {
+					w.Header().Add(key, v)
+				}
+			}
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(restored)))
+			w.Header().Set("X-iTaK-Cache", "HIT")
+			w.WriteHeader(cached.StatusCode)
+			w.Write([]byte(restored))
+			return
+		}
+	}
+
+	// ── Step 5: PII redaction ────────────────
 	redacted, count := s.tokenizer.Redact(bodyStr, matches)
 
-	// Track redacted count.
 	if count > 0 {
 		s.redactedCount.Add(int64(count))
 		s.addLog("REDACT", fmt.Sprintf("Redacted %d PII item(s)", count))
@@ -180,25 +367,21 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Enterprise: structured audit logging (metadata only, never PII).
+	// Audit logging.
 	if count > 0 {
 		var piiTypes []string
-		for _, m := range matches {
-			piiTypes = append(piiTypes, string(m.Type))
-		}
-		// Deduplicate types.
 		seen := make(map[string]bool)
-		var unique []string
-		for _, t := range piiTypes {
+		for _, m := range matches {
+			t := string(m.Type)
 			if !seen[t] {
 				seen[t] = true
-				unique = append(unique, t)
+				piiTypes = append(piiTypes, t)
 			}
 		}
 		s.auditLogger.Log(audit.Event{
 			EventType: "redact",
 			Items:     count,
-			Types:     unique,
+			Types:     piiTypes,
 			Method:    r.Method,
 			Path:      r.URL.Path,
 			Source:    r.RemoteAddr,
@@ -212,12 +395,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Build the upstream request.
+	// ── Step 6: Build and forward request ────
 	upstreamURL := *s.target
 	upstreamURL.Path = r.URL.Path
 	upstreamURL.RawQuery = r.URL.RawQuery
 
-	upReq, err := http.NewRequestWithContext(r.Context(), r.Method, upstreamURL.String(), bytes.NewReader([]byte(redacted)))
+	redactedBytes := []byte(redacted)
+	upReq, err := http.NewRequestWithContext(r.Context(), r.Method, upstreamURL.String(), bytes.NewReader(redactedBytes))
 	if err != nil {
 		http.Error(w, "failed to create upstream request", http.StatusInternalServerError)
 		return
@@ -233,12 +417,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	upReq.Header.Set("Host", s.target.Host)
-	// Fix content-length for the redacted body.
-	upReq.ContentLength = int64(len(redacted))
+	upReq.ContentLength = int64(len(redactedBytes))
 
-	// Forward to upstream.
+	// Forward with retry/fallback or direct.
 	client := &http.Client{}
-	resp, err := client.Do(upReq)
+	var resp *http.Response
+
+	if s.retryCfg != nil {
+		resp, err = retry.Do(client, upReq, redactedBytes, s.retryCfg)
+	} else {
+		resp, err = client.Do(upReq)
+	}
+
 	if err != nil {
 		s.addLog("ERROR", fmt.Sprintf("Upstream failed: %v", err))
 		s.auditLogger.Log(audit.Event{
@@ -270,7 +460,30 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Restore PII tokens in the response.
+	// ── Step 7: Spend tracking ───────────────
+	if s.spendTracker != nil {
+		s.spendTracker.TrackResponse(user, respBody)
+	}
+
+	// ── Step 8: Cache store ──────────────────
+	if s.cache != nil && cacheKey != "" && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		headers := make(map[string][]string)
+		for key, values := range resp.Header {
+			lower := strings.ToLower(key)
+			if lower == "content-length" || lower == "content-encoding" || lower == "transfer-encoding" {
+				continue
+			}
+			headers[key] = values
+		}
+		s.cache.Set(cacheKey, &cache.Entry{
+			Body:       respBody,
+			Headers:    headers,
+			StatusCode: resp.StatusCode,
+			CreatedAt:  time.Now(),
+		})
+	}
+
+	// ── Step 9: Restore PII in response ──────
 	restored := s.tokenizer.Restore(string(respBody))
 
 	if s.verbose && count > 0 {
@@ -285,7 +498,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Copy response headers.
 	for key, values := range resp.Header {
-		// Skip content-length and encoding since we may have changed the body.
 		lower := strings.ToLower(key)
 		if lower == "content-length" || lower == "content-encoding" || lower == "transfer-encoding" {
 			continue
@@ -295,7 +507,24 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if s.cache != nil {
+		w.Header().Set("X-iTaK-Cache", "MISS")
+	}
+
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(restored)))
 	w.WriteHeader(resp.StatusCode)
 	w.Write([]byte(restored))
+}
+
+// writeJSONError writes a JSON error response matching OpenAI error format.
+func writeJSONError(w http.ResponseWriter, status int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"error": map[string]interface{}{
+			"message": msg,
+			"type":    "itak_shield_error",
+			"code":    status,
+		},
+	})
 }

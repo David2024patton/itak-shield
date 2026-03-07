@@ -31,6 +31,54 @@ type HealthConfig struct {
 	Enabled bool `yaml:"enabled"`
 }
 
+// AuthKeyEntry defines a single API key with user identity.
+type AuthKeyEntry struct {
+	Key       string `yaml:"key"`
+	User      string `yaml:"user"`
+	Group     string `yaml:"group"`
+	RateLimit int    `yaml:"rate_limit"` // requests per minute
+}
+
+// AuthConfig controls virtual API key authentication and rate limiting.
+type AuthConfig struct {
+	Enabled   bool           `yaml:"enabled"`
+	Keys      []AuthKeyEntry `yaml:"keys"`
+	InjectKey string         `yaml:"inject_key"` // real upstream API key to inject
+}
+
+// CacheConfig controls response caching.
+type CacheConfig struct {
+	Enabled    bool `yaml:"enabled"`
+	TTLSeconds int  `yaml:"ttl_seconds"`
+	MaxEntries int  `yaml:"max_entries"`
+}
+
+// RetryConfig controls auto-retry and fallback routing.
+type RetryConfig struct {
+	Enabled         bool     `yaml:"enabled"`
+	MaxRetries      int      `yaml:"max_retries"`
+	BackoffMs       int      `yaml:"backoff_ms"`
+	FallbackTargets []string `yaml:"fallback_targets"`
+}
+
+// SpendPricing defines cost per 1M tokens.
+type SpendPricing struct {
+	Input  float64 `yaml:"input"`
+	Output float64 `yaml:"output"`
+}
+
+// SpendConfig controls token tracking and budget enforcement.
+type SpendConfig struct {
+	Enabled bool               `yaml:"enabled"`
+	Budgets map[string]float64 `yaml:"budgets"` // group -> max USD
+	Pricing SpendPricing       `yaml:"pricing"`
+}
+
+// DLPConfig controls data loss prevention policies.
+type DLPConfig struct {
+	Policies map[string]string `yaml:"policies"` // PIIType -> "redact" or "block"
+}
+
 // Config is the top-level configuration for iTaK Shield.
 // All fields are optional with sensible defaults.
 type Config struct {
@@ -40,6 +88,11 @@ type Config struct {
 	Audit   AuditConfig  `yaml:"audit"`
 	Rules   RulesConfig  `yaml:"rules"`
 	Health  HealthConfig `yaml:"health"`
+	Auth    AuthConfig   `yaml:"auth"`
+	Cache   CacheConfig  `yaml:"cache"`
+	Retry   RetryConfig  `yaml:"retry"`
+	Spend   SpendConfig  `yaml:"spend"`
+	DLP     DLPConfig    `yaml:"dlp"`
 }
 
 // Defaults returns a Config with sensible defaults for personal use.
@@ -55,6 +108,20 @@ func Defaults() *Config {
 		},
 		Health: HealthConfig{
 			Enabled: true,
+		},
+		Cache: CacheConfig{
+			TTLSeconds: 300,
+			MaxEntries: 1000,
+		},
+		Retry: RetryConfig{
+			MaxRetries: 3,
+			BackoffMs:  500,
+		},
+		Spend: SpendConfig{
+			Pricing: SpendPricing{
+				Input:  3.00,
+				Output: 15.00,
+			},
 		},
 	}
 }
@@ -93,6 +160,24 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Audit.Path == "" {
 		cfg.Audit.Path = "audit.jsonl"
+	}
+	if cfg.Cache.TTLSeconds == 0 {
+		cfg.Cache.TTLSeconds = 300
+	}
+	if cfg.Cache.MaxEntries == 0 {
+		cfg.Cache.MaxEntries = 1000
+	}
+	if cfg.Retry.MaxRetries == 0 {
+		cfg.Retry.MaxRetries = 3
+	}
+	if cfg.Retry.BackoffMs == 0 {
+		cfg.Retry.BackoffMs = 500
+	}
+	if cfg.Spend.Pricing.Input == 0 {
+		cfg.Spend.Pricing.Input = 3.00
+	}
+	if cfg.Spend.Pricing.Output == 0 {
+		cfg.Spend.Pricing.Output = 15.00
 	}
 
 	return cfg, nil

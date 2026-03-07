@@ -1,6 +1,6 @@
 {
     "name": "itak-shield",
-    "version": "0.1.0",
+    "version": "0.2.1",
     "description": "Privacy-first proxy for AI agents. Detects and redacts PII before it reaches cloud APIs.",
     "license": "MIT",
     "author": "David Patton",

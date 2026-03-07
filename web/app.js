@@ -482,6 +482,92 @@ const PROVIDERS = {
         ]
     },
 
+    // ── Automation Platforms ───────────────────
+    n8n: {
+        name: 'n8n',
+        url: '',
+        keyHint: 'n8n webhook or API credentials',
+        icon: '/icons/n8n.svg',
+        category: 'automation',
+        needsCustomUrl: true,
+        instructions: [
+            'Set the target URL to your n8n webhook or HTTP Request node endpoint.',
+            'Route your automation traffic through <code id="instrUrl1"></code>'
+        ]
+    },
+    make: {
+        name: 'Make (Integromat)',
+        url: 'https://hook.make.com',
+        keyHint: 'Make webhook authentication (if any)',
+        icon: '/icons/make.svg',
+        category: 'automation',
+        needsCustomUrl: true,
+        instructions: [
+            'Set the target URL to your Make.com Webhook URL.',
+            'Send requests to <code id="instrUrl1"></code>'
+        ]
+    },
+    zapier: {
+        name: 'Zapier',
+        url: 'https://hooks.zapier.com',
+        keyHint: 'Zapier authentication (if any)',
+        icon: '/icons/zapier.svg',
+        category: 'automation',
+        needsCustomUrl: true,
+        instructions: [
+            'Set the target URL to your Zapier Catch Hook URL.',
+            'Send requests to <code id="instrUrl1"></code>'
+        ]
+    },
+    activepieces: {
+        name: 'Activepieces',
+        url: '',
+        keyHint: 'Activepieces API key or token',
+        icon: '/icons/activepieces.svg',
+        category: 'automation',
+        needsCustomUrl: true,
+        instructions: [
+            'Set the target to your Activepieces instance URL.',
+            'Point your integrations to <code id="instrUrl1"></code>'
+        ]
+    },
+    nodered: {
+        name: 'Node-RED',
+        url: 'http://localhost:1880',
+        keyHint: 'Node-RED HTTP In node auth',
+        icon: '/icons/nodered.svg',
+        category: 'automation',
+        needsCustomUrl: true,
+        instructions: [
+            'Set the target to your Node-RED HTTP In endpoint.',
+            'Route requests through <code id="instrUrl1"></code>'
+        ]
+    },
+    pipedream: {
+        name: 'Pipedream',
+        url: 'https://eo.pipedream.net',
+        keyHint: 'Pipedream credentials',
+        icon: '/icons/pipedream.svg',
+        category: 'automation',
+        needsCustomUrl: true,
+        instructions: [
+            'Set the target URL to your Pipedream workflow endpoint.',
+            'Send data to <code id="instrUrl1"></code>'
+        ]
+    },
+    gumloop: {
+        name: 'Gumloop',
+        url: 'https://api.gumloop.com',
+        keyHint: 'Gumloop API Key',
+        icon: '/icons/gumloop.svg',
+        category: 'automation',
+        needsCustomUrl: true,
+        instructions: [
+            'Set the target URL to the Gumloop API endpoint.',
+            'Send requests through <code id="instrUrl1"></code>'
+        ]
+    },
+
     // ── iTaK Agent (Coming Soon) ───────────────
     itakagent: {
         name: 'iTaK Agent',
@@ -496,25 +582,31 @@ const PROVIDERS = {
     }
 };
 
-// Category display metadata
 const CATEGORIES = {
     foundation: { label: 'Foundation Models', desc: 'Direct from the model developers' },
     infra: { label: 'API Gateways', desc: 'Unified access to multiple models' },
     specialized: { label: 'Specialized', desc: 'Search, speed, and niche providers' },
     local: { label: 'Local / Self-Hosted', desc: 'Run models on your own hardware' },
     agents: { label: 'Agent Frameworks', desc: 'AI agents that call LLM providers' },
+    automation: { label: 'Automation Platforms', desc: 'n8n, Make, Zapier, and workflow engines' },
     custom: { label: 'Other', desc: 'Any OpenAI-compatible endpoint' }
 };
 
 // ─── State ───────────────────────────────────
 var currentStep = 1;
 var selectedProvider = null;
+var selectedMode = null;
 var proxyRunning = false;
 var pollInterval = null;
 var startTime = null;
+var activeTab = 'overview';
+var defaultRandomPort = Math.floor(Math.random() * (65535 - 10000 + 1)) + 10000;
 
 // ─── Featured provider display order ─────────
 var FEATURED_ORDER = ['custom', 'itakagent', 'openclaw', 'agentzero'];
+
+// ─── PWA ─────────────────────────────────────
+var deferredPWAPrompt = null;
 
 // ─── Build Provider Grid on Load ─────────────
 
@@ -542,7 +634,7 @@ function buildProviderGrid() {
     });
 
     // ── Category groups (non-featured) ────────
-    var categoryOrder = ['foundation', 'infra', 'specialized', 'local'];
+    var categoryOrder = ['foundation', 'infra', 'specialized', 'local', 'automation'];
 
     categoryOrder.forEach(function (catKey) {
         var cat = CATEGORIES[catKey];
@@ -649,30 +741,64 @@ function filterProviders(query) {
 
 function goToStep(step) {
     // Validate before advancing
-    if (step === 3 && !selectedProvider) return;
+    if (step === 3 && !selectedMode) return;
+    if (step === 4 && !selectedProvider) return;
 
-    // Populate review if going to step 4
-    if (step === 4) populateReview();
+    // Populate review if going to step 5
+    if (step === 5) populateReview();
 
     currentStep = step;
 
     // Hide all panels, show target
-    document.querySelectorAll('.wizard-panel').forEach(function (p) { p.classList.remove('active'); });
+    document.querySelectorAll('.wiz-panel').forEach(function (p) { p.classList.remove('active'); });
     var panel = document.getElementById('step' + step);
     if (panel) panel.classList.add('active');
 
     // Update step indicators
-    document.querySelectorAll('.step-dot').forEach(function (dot) {
+    document.querySelectorAll('.wiz-dot').forEach(function (dot) {
         var s = parseInt(dot.dataset.step);
         dot.classList.remove('active', 'completed');
         if (s === step) dot.classList.add('active');
         else if (s < step) dot.classList.add('completed');
     });
 
-    document.querySelectorAll('.step-line').forEach(function (line) {
+    document.querySelectorAll('.wiz-line').forEach(function (line) {
         var l = parseInt(line.dataset.line);
         line.classList.toggle('completed', l < step);
     });
+}
+
+// ─── Mode Selection ──────────────────────────
+
+function selectMode(mode) {
+    selectedMode = mode;
+    document.getElementById('modeIndividual').classList.toggle('selected', mode === 'individual');
+    document.getElementById('modeCompany').classList.toggle('selected', mode === 'company');
+    document.getElementById('step2Next').disabled = false;
+}
+
+function setMode(mode) {
+    selectedMode = mode;
+    localStorage.setItem('itak_mode', mode);
+    applyMode(mode);
+}
+
+function applyMode(mode) {
+    var shell = document.getElementById('appShell');
+    if (!shell) return;
+    shell.classList.remove('mode-individual', 'mode-company');
+    shell.classList.add('mode-' + mode);
+
+    // Update settings toggle buttons
+    var indBtn = document.getElementById('settingsModeIndividual');
+    var comBtn = document.getElementById('settingsModeCompany');
+    if (indBtn) indBtn.classList.toggle('active', mode === 'individual');
+    if (comBtn) comBtn.classList.toggle('active', mode === 'company');
+
+    // If currently on a company-only tab in individual mode, switch to overview
+    if (mode === 'individual' && (activeTab === 'analytics' || activeTab === 'team')) {
+        switchTab('overview');
+    }
 }
 
 // ─── Provider Selection ──────────────────────
@@ -699,7 +825,7 @@ function selectProvider(provider) {
     if (keyInput) keyInput.placeholder = prov.keyHint;
 
     // Enable next button
-    document.getElementById('step2Next').disabled = false;
+    document.getElementById('step3Next').disabled = false;
 }
 
 // ─── Review Step ─────────────────────────────
@@ -707,10 +833,11 @@ function selectProvider(provider) {
 function populateReview() {
     var provider = PROVIDERS[selectedProvider];
     var targetUrl = getTargetUrl();
-    var port = document.getElementById('proxyPort').value || '8080';
+    var port = document.getElementById('proxyPort').value || defaultRandomPort;
     var apiKey = document.getElementById('apiKey').value;
     var verbose = document.getElementById('verboseMode').checked;
 
+    document.getElementById('reviewMode').textContent = selectedMode === 'company' ? 'Company / Team' : 'Individual';
     document.getElementById('reviewProvider').textContent = provider.name;
     document.getElementById('reviewTarget').textContent = targetUrl || 'Not set';
     document.getElementById('reviewProxy').textContent = 'http://127.0.0.1:' + port;
@@ -736,8 +863,13 @@ function startProxy() {
     btn.textContent = 'Starting...';
 
     var targetUrl = getTargetUrl();
-    var port = parseInt(document.getElementById('proxyPort').value) || 8080;
+    var port = parseInt(document.getElementById('proxyPort').value) || defaultRandomPort;
     var verbose = document.getElementById('verboseMode').checked;
+
+    // Persist usage mode
+    if (selectedMode) {
+        localStorage.setItem('itak_mode', selectedMode);
+    }
 
     fetch('/api/start', {
         method: 'POST',
@@ -758,13 +890,13 @@ function startProxy() {
             } else {
                 alert('Failed to start: ' + (data.error || 'Unknown error'));
                 btn.disabled = false;
-                btn.textContent = '\uD83D\uDE80 Start iTaK Shield';
+                btn.textContent = 'Start iTaK Shield';
             }
         })
         .catch(function (err) {
             alert('Failed to connect to backend: ' + err.message);
             btn.disabled = false;
-            btn.textContent = '\uD83D\uDE80 Start iTaK Shield';
+            btn.textContent = 'Start iTaK Shield';
         });
 }
 
@@ -775,50 +907,47 @@ function stopProxy() {
     proxyRunning = false;
     stopPolling();
 
-    var banner = document.getElementById('statusBanner');
     var dot = document.getElementById('statusDot');
     var text = document.getElementById('statusText');
-    banner.className = 'status-banner stopped';
-    dot.className = 'status-dot stopped';
-    text.textContent = 'iTaK Shield is stopped';
+    if (dot) dot.className = 'status-dot-sm stopped';
+    if (text) text.textContent = 'iTaK Shield is stopped';
 }
 
 // ─── Reset Wizard ────────────────────────────
 
-function resetWizard() {
-    stopProxy();
-    proxyRunning = false;
+function openWizard() {
+    document.getElementById('wizardOverlay').classList.remove('hidden');
+    document.getElementById('appShell').style.display = 'none';
+
+    // Reset wizard state
     selectedProvider = null;
+    selectedMode = null;
     currentStep = 1;
 
     document.getElementById('apiKey').value = '';
-    document.getElementById('proxyPort').value = '8080';
+    document.getElementById('proxyPort').value = defaultRandomPort;
     document.getElementById('verboseMode').checked = true;
     document.getElementById('customUrl').value = '';
     document.getElementById('step2Next').disabled = true;
+    document.getElementById('step3Next').disabled = true;
     document.querySelectorAll('.provider-card').forEach(function (c) { c.classList.remove('selected'); });
     document.getElementById('customUrlGroup').classList.remove('visible');
+    document.getElementById('modeIndividual').classList.remove('selected');
+    document.getElementById('modeCompany').classList.remove('selected');
 
     var btn = document.getElementById('startBtn');
     btn.disabled = false;
-    btn.textContent = '\uD83D\uDE80 Start iTaK Shield';
+    btn.textContent = 'Start iTaK Shield';
 
-    document.getElementById('dashboard').classList.remove('active');
-    document.getElementById('stepsIndicator').style.display = '';
     goToStep(1);
-
-    document.querySelectorAll('.wizard-panel').forEach(function (p) { p.style.display = ''; });
 }
 
-// ─── Show Dashboard ──────────────────────────
+// ─── Show Dashboard (transition to app shell) ──
 
 function showDashboard(port, targetUrl) {
-    document.querySelectorAll('.wizard-panel').forEach(function (p) {
-        p.classList.remove('active');
-        p.style.display = 'none';
-    });
-    document.getElementById('stepsIndicator').style.display = 'none';
-    document.getElementById('dashboard').classList.add('active');
+    // Hide wizard overlay, show app shell
+    document.getElementById('wizardOverlay').classList.add('hidden');
+    document.getElementById('appShell').style.display = '';
 
     var proxyAddr = 'http://127.0.0.1:' + port;
     document.getElementById('dashProxy').textContent = proxyAddr;
@@ -830,6 +959,7 @@ function showDashboard(port, targetUrl) {
 
     var instrBody = document.getElementById('dashInstructionsBody');
     var ol = document.createElement('ol');
+    ol.className = 'instructions-list';
     provider.instructions.forEach(function (step) {
         var li = document.createElement('li');
         li.innerHTML = step;
@@ -851,20 +981,40 @@ function showDashboard(port, targetUrl) {
     document.getElementById('activityLog').innerHTML =
         '<div class="log-empty">No requests yet. Send a request through the proxy to see activity here.</div>';
 
-    var banner = document.getElementById('statusBanner');
+    // Update status bar
     var dot = document.getElementById('statusDot');
     var text = document.getElementById('statusText');
-    banner.className = 'status-banner running';
-    dot.className = 'status-dot running';
-    text.textContent = 'iTaK Shield is running';
+    if (dot) dot.className = 'status-dot-sm running';
+    if (text) text.textContent = 'iTaK Shield is running';
+
+    // Apply usage mode
+    var mode = selectedMode || localStorage.getItem('itak_mode') || 'individual';
+    applyMode(mode);
+
+    // Populate settings panel
+    document.getElementById('settingsProvider').textContent = provider.name;
+    document.getElementById('settingsTarget').textContent = targetUrl;
+    document.getElementById('settingsProxy').textContent = proxyAddr;
+
+    // Switch to overview tab
+    switchTab('overview');
+
+    // Load team users if in company mode
+    if (mode === 'company') {
+        loadTeamUsers();
+    }
 }
 
 // ─── Stats Polling ───────────────────────────
 
 function startPolling() {
     if (pollInterval) clearInterval(pollInterval);
-    pollInterval = setInterval(pollStatus, 2000);
+    pollInterval = setInterval(function () {
+        pollStatus();
+        pollAnalytics();
+    }, 2000);
     pollStatus();
+    pollAnalytics();
 }
 
 function stopPolling() {
@@ -905,12 +1055,10 @@ function pollStatus() {
             if (!data.running) {
                 proxyRunning = false;
                 stopPolling();
-                var banner = document.getElementById('statusBanner');
                 var dot = document.getElementById('statusDot');
                 var text = document.getElementById('statusText');
-                banner.className = 'status-banner stopped';
-                dot.className = 'status-dot stopped';
-                text.textContent = 'iTaK Shield has stopped';
+                if (dot) dot.className = 'status-dot-sm stopped';
+                if (text) text.textContent = 'iTaK Shield has stopped';
             }
         })
         .catch(function () { });
@@ -951,6 +1099,105 @@ function copyText(elementId) {
     });
 }
 
+// ─── Enterprise Analytics (removed analyticsSection hide/show) ──
+
+function pollAnalytics() {
+    if (!proxyRunning) return;
+
+    fetch('/api/analytics')
+        .then(function (resp) { return resp.json(); })
+        .then(function (data) {
+            if (!data.active) return;
+            updateAnalytics(data);
+        })
+        .catch(function () { });
+}
+
+function updateAnalytics(data) {
+    var features = data.features || {};
+    var badgeContainer = document.getElementById('featureBadges');
+    var badgeNames = {
+        auth: { label: 'Auth', icon: '🔑' },
+        cache: { label: 'Cache', icon: '💾' },
+        retry: { label: 'Retry', icon: '🔄' },
+        spend: { label: 'Spend', icon: '💰' },
+        dlp: { label: 'DLP', icon: '🛡️' }
+    };
+
+    var badgeHtml = '';
+    for (var key in badgeNames) {
+        var active = features[key] ? 'active' : '';
+        badgeHtml += '<span class="feature-badge ' + active + '">' +
+            badgeNames[key].icon + ' ' + badgeNames[key].label + '</span>';
+    }
+    badgeContainer.innerHTML = badgeHtml;
+
+    // Cache stats
+    var cacheCard = document.getElementById('cacheCard');
+    if (data.cache && features.cache) {
+        cacheCard.style.display = '';
+        var total = (data.cache.hits || 0) + (data.cache.misses || 0);
+        var hitRate = total > 0 ? Math.round((data.cache.hits / total) * 100) : 0;
+        document.getElementById('cacheHitRate').textContent = hitRate + '%';
+        document.getElementById('cacheBar').style.width = hitRate + '%';
+        document.getElementById('cacheHits').textContent = data.cache.hits || 0;
+        document.getElementById('cacheMisses').textContent = data.cache.misses || 0;
+        document.getElementById('cacheEntries').textContent = data.cache.entries || 0;
+        document.getElementById('cacheMax').textContent = data.cache.max_entries || 0;
+    } else {
+        cacheCard.style.display = 'none';
+    }
+
+    // Spend stats
+    var spendCard = document.getElementById('spendCard');
+    if (data.spend && features.spend) {
+        spendCard.style.display = '';
+        document.getElementById('spendTotal').textContent = '$' + (data.spend.total_usd || 0).toFixed(4);
+        document.getElementById('spendInput').textContent = formatTokens(data.spend.total_input || 0);
+        document.getElementById('spendOutput').textContent = formatTokens(data.spend.total_output || 0);
+
+        var byUserContainer = document.getElementById('spendByUser');
+        if (data.spend.by_user && Object.keys(data.spend.by_user).length > 0) {
+            var rows = '<div class="spend-table-header"><span>User</span><span>Tokens</span><span>Cost</span></div>';
+            for (var user in data.spend.by_user) {
+                var s = data.spend.by_user[user];
+                var totalTokens = (s.input_tokens || 0) + (s.output_tokens || 0);
+                rows += '<div class="spend-table-row">' +
+                    '<span>' + user + '</span>' +
+                    '<span>' + formatTokens(totalTokens) + '</span>' +
+                    '<span>$' + (s.estimated_usd || 0).toFixed(4) + '</span>' +
+                    '</div>';
+            }
+            byUserContainer.innerHTML = rows;
+        } else {
+            byUserContainer.innerHTML = '';
+        }
+    } else {
+        spendCard.style.display = 'none';
+    }
+
+    // User activity
+    var usersCard = document.getElementById('usersCard');
+    if (data.auth_users && features.auth) {
+        usersCard.style.display = '';
+        var table = document.getElementById('userActivityTable');
+        var sorted = Object.entries(data.auth_users).sort(function (a, b) { return b[1] - a[1]; });
+        var html = '<div class="user-table-header"><span>User</span><span>Requests</span></div>';
+        sorted.forEach(function (entry) {
+            html += '<div class="user-table-row"><span>' + entry[0] + '</span><span>' + entry[1] + '</span></div>';
+        });
+        table.innerHTML = html;
+    } else {
+        usersCard.style.display = 'none';
+    }
+}
+
+function formatTokens(n) {
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+    if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+    return n.toString();
+}
+
 // ─── Auto-check if proxy is already running ──
 
 function checkInitialStatus() {
@@ -976,9 +1223,559 @@ function checkInitialStatus() {
         .catch(function () { });
 }
 
+// ─── Team Management ─────────────────────────
+
+function loadTeamUsers() {
+    fetch('/api/users')
+        .then(function (resp) { return resp.json(); })
+        .then(function (users) {
+            var container = document.getElementById('teamUserList');
+            if (!users || users.length === 0) {
+                container.innerHTML = '<div class="log-empty">No users yet. Add a user above to get started.</div>';
+                return;
+            }
+            container.innerHTML = '';
+            users.forEach(function (user) {
+                container.appendChild(renderUserCard(user));
+            });
+        })
+        .catch(function () { });
+}
+
+function createUser() {
+    var name = document.getElementById('newUserName').value.trim();
+    var email = document.getElementById('newUserEmail').value.trim();
+    var group = document.getElementById('newUserGroup').value.trim() || 'default';
+    var rateLimit = parseInt(document.getElementById('newUserRate').value) || 0;
+
+    if (!name) {
+        alert('User name is required.');
+        return;
+    }
+
+    fetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name, email: email, group: group, rate_limit: rateLimit })
+    })
+        .then(function (resp) { return resp.json(); })
+        .then(function (data) {
+            if (data.ok) {
+                // Clear form
+                document.getElementById('newUserName').value = '';
+                document.getElementById('newUserEmail').value = '';
+                document.getElementById('newUserGroup').value = 'default';
+                document.getElementById('newUserRate').value = '0';
+                loadTeamUsers();
+            } else {
+                alert('Error: ' + (data.error || 'Failed to create user'));
+            }
+        })
+        .catch(function (err) { alert('Network error: ' + err.message); });
+}
+
+function deleteUser(userId) {
+    if (!confirm('Delete this user and all their tokens?')) return;
+
+    fetch('/api/users/' + userId, { method: 'DELETE' })
+        .then(function (resp) { return resp.json(); })
+        .then(function (data) {
+            if (data.ok) {
+                loadTeamUsers();
+            } else {
+                alert('Error: ' + (data.error || 'Failed to delete user'));
+            }
+        })
+        .catch(function (err) { alert('Network error: ' + err.message); });
+}
+
+function generateToken(userId) {
+    var labelInput = document.getElementById('tokenLabel_' + userId);
+    var expiresInput = document.getElementById('tokenExpires_' + userId);
+    var label = labelInput ? labelInput.value.trim() : 'api-key';
+    var expiresIn = expiresInput ? parseInt(expiresInput.value) : 0;
+
+    if (!label) label = 'api-key';
+
+    var body = { user_id: userId, label: label };
+    if (expiresIn > 0) body.expires_in = expiresIn;
+
+    fetch('/api/tokens', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+    })
+        .then(function (resp) { return resp.json(); })
+        .then(function (data) {
+            if (data.ok && data.token) {
+                // Show the generated token key in a special reveal box
+                var reveal = document.getElementById('tokenReveal_' + userId);
+                if (reveal) {
+                    reveal.style.display = '';
+                    reveal.querySelector('.token-key-value').textContent = data.token.key;
+                }
+                // Clear the form
+                if (labelInput) labelInput.value = '';
+                if (expiresInput) expiresInput.value = '';
+                // Refresh user list to show the new token
+                loadTeamUsers();
+            } else {
+                alert('Error: ' + (data.error || 'Failed to generate token'));
+            }
+        })
+        .catch(function (err) { alert('Network error: ' + err.message); });
+}
+
+function revokeToken(userId, tokenKey) {
+    if (!confirm('Revoke this token? It will immediately stop working.')) return;
+
+    fetch('/api/tokens/revoke', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, token_key: tokenKey })
+    })
+        .then(function (resp) { return resp.json(); })
+        .then(function (data) {
+            if (data.ok) {
+                loadTeamUsers();
+            } else {
+                alert('Error: ' + (data.error || 'Failed to revoke token'));
+            }
+        })
+        .catch(function (err) { alert('Network error: ' + err.message); });
+}
+
+function renderUserCard(user) {
+    var card = document.createElement('div');
+    card.className = 'team-user-card';
+
+    // Header
+    var header = document.createElement('div');
+    header.className = 'team-user-header';
+
+    var info = document.createElement('div');
+    info.className = 'team-user-info';
+    info.innerHTML =
+        '<span class="team-user-name">' + user.name + '</span>' +
+        (user.email ? '<span class="team-user-email">' + user.email + '</span>' : '') +
+        '<span class="team-user-meta">' + user.group + (user.rate_limit > 0 ? ' | ' + user.rate_limit + ' req/min' : ' | unlimited') + '</span>';
+
+    var actions = document.createElement('div');
+    actions.className = 'team-user-actions';
+    actions.innerHTML = '<button class="btn-icon btn-icon-danger" onclick="deleteUser(\'' + user.id + '\')" title="Delete user">&#x2716;</button>';
+
+    header.appendChild(info);
+    header.appendChild(actions);
+    card.appendChild(header);
+
+    // Existing tokens
+    var tokensDiv = document.createElement('div');
+    tokensDiv.className = 'team-tokens';
+
+    if (user.tokens && user.tokens.length > 0) {
+        user.tokens.forEach(function (token) {
+            if (token.revoked) return;
+            var row = document.createElement('div');
+            row.className = 'team-token-row';
+
+            var keyPreview = token.key.substring(0, 8) + '...' + token.key.substring(token.key.length - 4);
+            var expiry = token.expires_at ? new Date(token.expires_at).toLocaleDateString() : 'Never';
+
+            row.innerHTML =
+                '<div class="team-token-info">' +
+                '<span class="team-token-label">' + token.label + '</span>' +
+                '<code class="team-token-preview">' + keyPreview + '</code>' +
+                '<span class="team-token-expiry">Expires: ' + expiry + '</span>' +
+                '</div>' +
+                '<button class="btn-icon btn-icon-warning" onclick="revokeToken(\'' + user.id + '\', \'' + token.key + '\')" title="Revoke">Revoke</button>';
+
+            tokensDiv.appendChild(row);
+        });
+    }
+
+    card.appendChild(tokensDiv);
+
+    // Generate token form
+    var genDiv = document.createElement('div');
+    genDiv.className = 'team-gen-token';
+    genDiv.innerHTML =
+        '<div class="team-gen-row">' +
+        '<input type="text" class="form-input form-input-sm" id="tokenLabel_' + user.id + '" placeholder="Label (e.g. prod-key)">' +
+        '<input type="number" class="form-input form-input-sm" id="tokenExpires_' + user.id + '" placeholder="Expires in (hours)" min="0">' +
+        '<button class="btn btn-sm btn-primary" onclick="generateToken(\'' + user.id + '\')">Generate Token</button>' +
+        '</div>' +
+        '<div class="team-token-reveal" id="tokenReveal_' + user.id + '" style="display: none;">' +
+        '<span class="team-token-reveal-label">New token (copy now, shown once):</span>' +
+        '<div class="team-token-reveal-key">' +
+        '<code class="token-key-value"></code>' +
+        '<button class="copy-btn" onclick="copyTokenText(this)">Copy</button>' +
+        '</div>' +
+        '</div>';
+
+    card.appendChild(genDiv);
+
+    return card;
+}
+
+function copyTokenText(btn) {
+    var code = btn.previousElementSibling;
+    if (!code) return;
+    navigator.clipboard.writeText(code.textContent).then(function () {
+        var orig = btn.textContent;
+        btn.textContent = 'Copied!';
+        btn.style.color = 'var(--success)';
+        btn.style.borderColor = 'var(--success)';
+        setTimeout(function () {
+            btn.textContent = orig;
+            btn.style.color = '';
+            btn.style.borderColor = '';
+        }, 2000);
+    });
+}
+
+// ─── Help Tooltips ───────────────────────────
+
+var activeTooltip = null;
+
+function initHelpIcons() {
+    var icons = document.querySelectorAll('.help-icon');
+    icons.forEach(function (icon) {
+        icon.addEventListener('mouseenter', function () {
+            showHelpTooltip(icon);
+        });
+        icon.addEventListener('mouseleave', function () {
+            hideHelpTooltip();
+        });
+        icon.addEventListener('click', function (e) {
+            e.stopPropagation();
+            if (activeTooltip && activeTooltip.parentElement === icon) {
+                hideHelpTooltip();
+            } else {
+                showHelpTooltip(icon);
+            }
+        });
+    });
+
+    document.addEventListener('click', function () {
+        hideHelpTooltip();
+    });
+}
+
+function showHelpTooltip(icon) {
+    hideHelpTooltip();
+    var text = icon.getAttribute('data-help');
+    if (!text) return;
+
+    var tooltip = document.createElement('div');
+    tooltip.className = 'help-tooltip';
+    tooltip.textContent = text;
+    activeTooltip = tooltip;
+
+    document.body.appendChild(tooltip);
+
+    // Position below the icon
+    var rect = icon.getBoundingClientRect();
+    var tW = tooltip.offsetWidth;
+    var tH = tooltip.offsetHeight;
+
+    var left = rect.left + (rect.width / 2) - (tW / 2);
+    var top = rect.bottom + 6;
+
+    // Keep within viewport
+    if (left < 8) left = 8;
+    if (left + tW > window.innerWidth - 8) left = window.innerWidth - tW - 8;
+    if (top + tH > window.innerHeight - 8) {
+        top = rect.top - tH - 6;
+    }
+
+    tooltip.style.left = left + 'px';
+    tooltip.style.top = top + 'px';
+}
+
+function hideHelpTooltip() {
+    if (activeTooltip) {
+        activeTooltip.remove();
+        activeTooltip = null;
+    }
+}
+
+// ─── Tunnel / Remote Access ──────────────────
+
+var tunnelConnected = false;
+var tunnelStartTime = null;
+var tunnelPollInterval = null;
+
+function connectTunnel() {
+    var addr = document.getElementById('tunnelRelayAddr').value.trim();
+    if (!addr) {
+        alert('Enter the relay server address (e.g. your-vps.com:9443)');
+        return;
+    }
+
+    var btn = document.getElementById('tunnelConnectBtn');
+    btn.disabled = true;
+    btn.textContent = 'Connecting...';
+
+    // Update status to connecting
+    updateTunnelUI('connecting');
+
+    fetch('/api/tunnel/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ relay: addr })
+    })
+        .then(function (resp) { return resp.json(); })
+        .then(function (data) {
+            if (data.ok) {
+                tunnelConnected = true;
+                tunnelStartTime = Date.now();
+                showTunnelConnected(data.public_url || ('http://' + addr), addr);
+                startTunnelPolling();
+            } else {
+                alert('Failed to connect: ' + (data.error || 'Unknown error'));
+                updateTunnelUI('disconnected');
+                btn.disabled = false;
+                btn.textContent = 'Connect';
+            }
+        })
+        .catch(function (err) {
+            alert('Network error: ' + err.message);
+            updateTunnelUI('disconnected');
+            btn.disabled = false;
+            btn.textContent = 'Connect';
+        });
+}
+
+function disconnectTunnel() {
+    fetch('/api/tunnel/disconnect', { method: 'POST' }).catch(function () { });
+    tunnelConnected = false;
+    stopTunnelPolling();
+    showTunnelDisconnected();
+}
+
+function showTunnelConnected(publicUrl, relay) {
+    document.getElementById('tunnelDisconnected').style.display = 'none';
+    document.getElementById('tunnelConnected').style.display = '';
+    document.getElementById('tunnelPublicUrl').textContent = publicUrl;
+    document.getElementById('tunnelRelayDisplay').textContent = relay;
+    updateTunnelUI('connected');
+}
+
+function showTunnelDisconnected() {
+    document.getElementById('tunnelConnected').style.display = 'none';
+    document.getElementById('tunnelDisconnected').style.display = '';
+    var btn = document.getElementById('tunnelConnectBtn');
+    btn.disabled = false;
+    btn.textContent = 'Connect';
+    updateTunnelUI('disconnected');
+}
+
+function updateTunnelUI(state) {
+    var dot = document.getElementById('tunnelDot');
+    var label = document.getElementById('tunnelStatusLabel');
+
+    dot.className = 'tunnel-status-dot ' + state;
+    if (state === 'connected') {
+        label.textContent = 'Connected';
+        label.style.color = 'var(--success)';
+    } else if (state === 'connecting') {
+        label.textContent = 'Connecting...';
+        label.style.color = 'var(--warning)';
+    } else {
+        label.textContent = 'Disconnected';
+        label.style.color = '';
+    }
+}
+
+function startTunnelPolling() {
+    if (tunnelPollInterval) clearInterval(tunnelPollInterval);
+    tunnelPollInterval = setInterval(function () {
+        pollTunnelStatus();
+    }, 3000);
+}
+
+function stopTunnelPolling() {
+    if (tunnelPollInterval) {
+        clearInterval(tunnelPollInterval);
+        tunnelPollInterval = null;
+    }
+}
+
+function pollTunnelStatus() {
+    if (!tunnelConnected) return;
+
+    // Update uptime
+    if (tunnelStartTime) {
+        var elapsed = Math.floor((Date.now() - tunnelStartTime) / 1000);
+        document.getElementById('tunnelUptime').textContent = formatUptime(elapsed);
+    }
+
+    fetch('/api/tunnel/status')
+        .then(function (resp) { return resp.json(); })
+        .then(function (data) {
+            if (!data.connected) {
+                tunnelConnected = false;
+                stopTunnelPolling();
+                showTunnelDisconnected();
+            }
+        })
+        .catch(function () { });
+}
+
+// ─── Copy Inline Code Helper ─────────────────
+
+function copyInline(btn) {
+    var code = btn.previousElementSibling;
+    if (!code) return;
+    navigator.clipboard.writeText(code.textContent).then(function () {
+        var orig = btn.textContent;
+        btn.textContent = 'Copied!';
+        btn.style.color = 'var(--success)';
+        btn.style.borderColor = 'var(--success)';
+        setTimeout(function () {
+            btn.textContent = orig;
+            btn.style.color = '';
+            btn.style.borderColor = '';
+        }, 1500);
+    });
+}
+
+// ─── Tab Switching ───────────────────────────
+
+function switchTab(tab) {
+    activeTab = tab;
+
+    // Update sidebar nav
+    document.querySelectorAll('.nav-item').forEach(function (item) {
+        item.classList.toggle('active', item.dataset.tab === tab);
+    });
+
+    // Update panels
+    document.querySelectorAll('.tab-panel').forEach(function (panel) {
+        panel.classList.toggle('active', panel.dataset.tab === tab);
+    });
+
+    // Close mobile drawer after selection
+    var sidebar = document.getElementById('sidebar');
+    var backdrop = document.getElementById('sidebarBackdrop');
+    if (sidebar) sidebar.classList.remove('mobile-open');
+    if (backdrop) backdrop.classList.remove('visible');
+}
+
+// ─── Sidebar Toggle ──────────────────────────
+
+function toggleSidebar() {
+    var shell = document.getElementById('appShell');
+    if (!shell) return;
+    var collapsed = shell.classList.toggle('sidebar-collapsed');
+    localStorage.setItem('itak_sidebar', collapsed ? 'collapsed' : 'expanded');
+}
+
+// ─── Sidebar Resize ──────────────────────────
+
+function initSidebarResize() {
+    var handle = document.getElementById('sidebarResize');
+    var sidebar = document.getElementById('sidebar');
+    if (!handle || !sidebar) return;
+
+    var startX, startW;
+
+    handle.addEventListener('mousedown', function (e) {
+        e.preventDefault();
+        startX = e.clientX;
+        startW = sidebar.offsetWidth;
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+
+        function onMove(ev) {
+            var newW = Math.max(180, Math.min(360, startW + (ev.clientX - startX)));
+            sidebar.style.width = newW + 'px';
+        }
+
+        function onUp() {
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            localStorage.setItem('itak_sidebar_width', sidebar.style.width);
+        }
+
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+    });
+
+    // Restore saved width
+    var savedW = localStorage.getItem('itak_sidebar_width');
+    if (savedW) sidebar.style.width = savedW;
+}
+
+// ─── Mobile Drawer ───────────────────────────
+
+function toggleMobileDrawer() {
+    var sidebar = document.getElementById('sidebar');
+    var backdrop = document.getElementById('sidebarBackdrop');
+    if (!sidebar) return;
+
+    var isOpen = sidebar.classList.toggle('mobile-open');
+    if (backdrop) backdrop.classList.toggle('visible', isOpen);
+}
+
+// ─── PWA Install ─────────────────────────────
+
+function pwaInstall() {
+    if (deferredPWAPrompt) {
+        deferredPWAPrompt.prompt();
+        deferredPWAPrompt.userChoice.then(function () {
+            deferredPWAPrompt = null;
+            document.getElementById('pwaBanner').style.display = 'none';
+        });
+    }
+}
+
+function pwaDismiss() {
+    document.getElementById('pwaBanner').style.display = 'none';
+    sessionStorage.setItem('itak_pwa_dismissed', '1');
+}
+
 // ─── Init ────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', function () {
     buildProviderGrid();
+    document.getElementById('proxyPort').value = defaultRandomPort;
     checkInitialStatus();
+    initHelpIcons();
+    initSidebarResize();
+
+    // Restore sidebar collapsed state
+    if (localStorage.getItem('itak_sidebar') === 'collapsed') {
+        var shell = document.getElementById('appShell');
+        if (shell) shell.classList.add('sidebar-collapsed');
+    }
+
+    // Check if tunnel is already active
+    fetch('/api/tunnel/status')
+        .then(function (resp) { return resp.json(); })
+        .then(function (data) {
+            if (data.connected) {
+                tunnelConnected = true;
+                tunnelStartTime = Date.now() - ((data.uptime_seconds || 0) * 1000);
+                showTunnelConnected(data.public_url || '-', data.relay || '-');
+                startTunnelPolling();
+            }
+        })
+        .catch(function () { });
+
+    // PWA install prompt
+    window.addEventListener('beforeinstallprompt', function (e) {
+        e.preventDefault();
+        deferredPWAPrompt = e;
+        if (!sessionStorage.getItem('itak_pwa_dismissed')) {
+            document.getElementById('pwaBanner').style.display = '';
+        }
+    });
+
+    // Register service worker
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/sw.js').catch(function () { });
+    }
 });
