@@ -33,10 +33,10 @@ Your SSN, email, API keys, home directory paths, and private IPs never reach Ope
 
 ```mermaid
 flowchart LR
-    A["Your AI Agent\n(Agent Zero, OpenClaw, etc.)"] -->|"Raw request with PII\njohn@acme.com\n192.168.1.50"| B["iTaK Shield"]
-    B -->|"Sanitized request\n[EMAIL_1]\n[IP_ADDR_1]"| C["Cloud API\n(OpenAI, Gemini, Claude)"]
-    C -->|"Response with tokens\n[EMAIL_1] has valid creds"| B
-    B -->|"Restored response\njohn@acme.com has valid creds"| A
+    A["Your AI Agent<br>(Agent Zero, OpenClaw, etc.)"] -->|"Raw request with PII<br>john@acme.com<br>192.168.1.50"| B["iTaK Shield"]
+    B -->|"Sanitized request<br>[EMAIL_1]<br>[IP_ADDR_1]"| C["Cloud API<br>(OpenAI, Gemini, Claude)"]
+    C -->|"Response with tokens<br>[EMAIL_1] has valid creds"| B
+    B -->|"Restored response<br>john@acme.com has valid creds"| A
 
     style B fill:#1a1a2e,stroke:#e94560,stroke-width:3px,color:#fff
     style A fill:#16213e,stroke:#0f3460,stroke-width:2px,color:#fff
@@ -51,9 +51,9 @@ The AI sees `[EMAIL_1]` instead of your real email. It still knows the value is 
 flowchart TB
     subgraph shield["iTaK Shield - What happens on your machine"]
         direction TB
-        S1["1. Scanner\nDetects 8 types of PII\nusing pattern matching"] --> S2["2. Tokenizer\nReplaces real values with\ntyped placeholders"]
-        S2 --> S3["3. Proxy\nForwards sanitized request\nto cloud API"]
-        S3 --> S4["4. Restore\nSwaps tokens back to\nreal values in response"]
+        S1["1. Scanner<br>Detects 8 types of PII<br>using pattern matching"] --> S2["2. Tokenizer<br>Replaces real values with<br>typed placeholders"]
+        S2 --> S3["3. Proxy<br>Forwards sanitized request<br>to cloud API"]
+        S3 --> S4["4. Restore<br>Swaps tokens back to<br>real values in response"]
     end
 
     subgraph memory["Token Map (RAM only)"]
@@ -110,11 +110,11 @@ If you're new to AI tools, here's what you need to know:
 
 ```mermaid
 flowchart TD
-    A["You type a message\nwith personal info"] --> B{"Are you using\na cloud API?"}
-    B -->|"Yes\n(OpenAI, Gemini, Claude)"| C["Start iTaK Shield\nbefore your AI tool"]
-    B -->|"No\n(Local model like Ollama)"| D["No need for Shield.\nYour data stays local."]
-    C --> E["Point your AI tool\nat iTaK Shield"]
-    E --> F["Use your tool normally.\nPII is auto-redacted."]
+    A["You type a message<br>with personal info"] --> B{"Are you using<br>a cloud API?"}
+    B -->|"Yes<br>(OpenAI, Gemini, Claude)"| C["Start iTaK Shield<br>before your AI tool"]
+    B -->|"No<br>(Local model like Ollama)"| D["No need for Shield.<br>Your data stays local."]
+    C --> E["Point your AI tool<br>at iTaK Shield"]
+    E --> F["Use your tool normally.<br>PII is auto-redacted."]
 
     style C fill:#1a1a2e,stroke:#e94560,stroke-width:2px,color:#fff
     style D fill:#0d1117,stroke:#30363d,stroke-width:2px,color:#c9d1d9
@@ -413,15 +413,15 @@ itak-shield --version
 flowchart TB
     subgraph without["Without iTaK Shield"]
         direction TB
-        W1["You: Fix the bug for\njohn.smith@acme.com\nSSN: 123-45-6789"] -->|"Sent as-is"| W2["Cloud sees:\nYour real email\nYour real SSN\nYour file paths"]
+        W1["You: Fix the bug for<br>john.smith@acme.com<br>SSN: 123-45-6789"] -->|"Sent as-is"| W2["Cloud sees:<br>Your real email<br>Your real SSN<br>Your file paths"]
     end
 
     subgraph with["With iTaK Shield"]
         direction TB
-        A1["You: Fix the bug for\njohn.smith@acme.com\nSSN: 123-45-6789"] -->|"Intercepted"| A2["iTaK Shield\nredacts PII"]
-        A2 -->|"Sanitized"| A3["Cloud sees:\n[EMAIL_1]\n[SSN_1]\n[PATH_1]"]
-        A3 -->|"AI responds"| A4["iTaK Shield\nrestores tokens"]
-        A4 -->|"You see original\nvalues restored"| A5["Full response with\nyour real data back"]
+        A1["You: Fix the bug for<br>john.smith@acme.com<br>SSN: 123-45-6789"] -->|"Intercepted"| A2["iTaK Shield<br>redacts PII"]
+        A2 -->|"Sanitized"| A3["Cloud sees:<br>[EMAIL_1]<br>[SSN_1]<br>[PATH_1]"]
+        A3 -->|"AI responds"| A4["iTaK Shield<br>restores tokens"]
+        A4 -->|"You see original<br>values restored"| A5["Full response with<br>your real data back"]
     end
 
     style without fill:#2d1117,stroke:#da3633,stroke-width:2px,color:#f85149
