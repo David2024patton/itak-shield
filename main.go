@@ -23,12 +23,19 @@ import (
 	"github.com/David2024patton/itak-shield/spend"
 )
 
-var version = "0.2.0"
+var version = "0.3.0"
 
 //go:embed web/*
 var webFS embed.FS
 
 func main() {
+	// Check for subcommands before flag parsing.
+	if len(os.Args) > 1 {
+		if handleSubcommand(os.Args[1:]) {
+			return
+		}
+	}
+
 	target := flag.String("target", "", "Upstream API URL (e.g. https://api.openai.com)")
 	port := flag.Int("port", 0, "Local port to listen on (default: random 5-digit port)")
 	verbose := flag.Bool("verbose", false, "Log redaction details")
