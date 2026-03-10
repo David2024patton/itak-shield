@@ -659,17 +659,105 @@ func (d *DB) SeedDefaultPricing() error {
 	}
 
 	defaults := []PricingProfile{
+		// ─── OpenAI (openai.com/pricing, March 2026) ───
 		{ID: "openai-gpt4o", Name: "GPT-4o", Provider: "openai", InputPerMillion: 2.50, OutputPerMillion: 10.00, IsDefault: true},
 		{ID: "openai-gpt4o-mini", Name: "GPT-4o Mini", Provider: "openai", InputPerMillion: 0.15, OutputPerMillion: 0.60},
 		{ID: "openai-o1", Name: "o1", Provider: "openai", InputPerMillion: 15.00, OutputPerMillion: 60.00},
-		{ID: "anthropic-sonnet", Name: "Claude 3.5 Sonnet", Provider: "anthropic", InputPerMillion: 3.00, OutputPerMillion: 15.00},
-		{ID: "anthropic-haiku", Name: "Claude 3.5 Haiku", Provider: "anthropic", InputPerMillion: 0.80, OutputPerMillion: 4.00},
-		{ID: "anthropic-opus", Name: "Claude 3 Opus", Provider: "anthropic", InputPerMillion: 15.00, OutputPerMillion: 75.00},
-		{ID: "google-gemini-pro", Name: "Gemini 2.0 Flash", Provider: "google", InputPerMillion: 0.10, OutputPerMillion: 0.40},
-		{ID: "google-gemini-ultra", Name: "Gemini 2.5 Pro", Provider: "google", InputPerMillion: 1.25, OutputPerMillion: 10.00},
-		{ID: "mistral-large", Name: "Mistral Large", Provider: "mistral", InputPerMillion: 2.00, OutputPerMillion: 6.00},
-		{ID: "groq-llama", Name: "Groq Llama 3", Provider: "groq", InputPerMillion: 0.06, OutputPerMillion: 0.06},
-		{ID: "local-free", Name: "Local / Ollama", Provider: "local", InputPerMillion: 0.00, OutputPerMillion: 0.00},
+		{ID: "openai-o3", Name: "o3", Provider: "openai", InputPerMillion: 2.00, OutputPerMillion: 8.00},
+
+		// ─── Anthropic (anthropic.com/pricing, March 2026) ───
+		{ID: "anthropic-opus", Name: "Claude Opus 4.6", Provider: "anthropic", InputPerMillion: 5.00, OutputPerMillion: 25.00},
+		{ID: "anthropic-sonnet", Name: "Claude Sonnet 4.6", Provider: "anthropic", InputPerMillion: 3.00, OutputPerMillion: 15.00, IsDefault: true},
+		{ID: "anthropic-haiku", Name: "Claude Haiku 4.5", Provider: "anthropic", InputPerMillion: 1.00, OutputPerMillion: 5.00},
+
+		// ─── Google (ai.google.dev/pricing, March 2026) ───
+		{ID: "google-gemini3-pro", Name: "Gemini 3 Pro", Provider: "google", InputPerMillion: 2.00, OutputPerMillion: 12.00},
+		{ID: "google-gemini3-flash", Name: "Gemini 3 Flash", Provider: "google", InputPerMillion: 0.50, OutputPerMillion: 3.00, IsDefault: true},
+		{ID: "google-gemini25-pro", Name: "Gemini 2.5 Pro", Provider: "google", InputPerMillion: 1.25, OutputPerMillion: 10.00},
+		{ID: "google-gemini25-flash", Name: "Gemini 2.5 Flash", Provider: "google", InputPerMillion: 0.30, OutputPerMillion: 2.50},
+
+		// ─── xAI (x.ai/api, March 2026) ───
+		{ID: "xai-grok4", Name: "Grok 4", Provider: "xai", InputPerMillion: 3.00, OutputPerMillion: 15.00, IsDefault: true},
+		{ID: "xai-grok4-fast", Name: "Grok 4 Fast", Provider: "xai", InputPerMillion: 0.20, OutputPerMillion: 0.50},
+
+		// ─── DeepSeek (deepseek.com/pricing, March 2026) ───
+		{ID: "deepseek-v32", Name: "DeepSeek V3.2", Provider: "deepseek", InputPerMillion: 0.28, OutputPerMillion: 0.42, IsDefault: true},
+		{ID: "deepseek-r1", Name: "DeepSeek R1", Provider: "deepseek", InputPerMillion: 0.55, OutputPerMillion: 2.19},
+
+		// ─── Mistral (mistral.ai/pricing, March 2026) ───
+		{ID: "mistral-large3", Name: "Mistral Large 3", Provider: "mistral", InputPerMillion: 0.50, OutputPerMillion: 1.50, IsDefault: true},
+		{ID: "mistral-small31", Name: "Mistral Small 3.1", Provider: "mistral", InputPerMillion: 0.10, OutputPerMillion: 0.30},
+		{ID: "mistral-codestral", Name: "Codestral", Provider: "mistral", InputPerMillion: 0.30, OutputPerMillion: 0.90},
+
+		// ─── Cohere (cohere.com/pricing, March 2026) ───
+		{ID: "cohere-command-r-plus", Name: "Command R+", Provider: "cohere", InputPerMillion: 2.50, OutputPerMillion: 10.00, IsDefault: true},
+		{ID: "cohere-command-r", Name: "Command R", Provider: "cohere", InputPerMillion: 0.15, OutputPerMillion: 0.60},
+
+		// ─── NVIDIA NIM (build.nvidia.com, March 2026) ───
+		{ID: "nvidia-nemotron-nano", Name: "Nemotron Nano 30B", Provider: "nvidia", InputPerMillion: 0.05, OutputPerMillion: 0.20, IsDefault: true},
+
+		// ─── Qwen / Alibaba (alibabacloud.com/dashscope, March 2026) ───
+		{ID: "qwen-max", Name: "Qwen Max", Provider: "qwen", InputPerMillion: 1.60, OutputPerMillion: 6.40, IsDefault: true},
+		{ID: "qwen-plus", Name: "Qwen Plus", Provider: "qwen", InputPerMillion: 0.40, OutputPerMillion: 1.20},
+		{ID: "qwen-turbo", Name: "Qwen Turbo", Provider: "qwen", InputPerMillion: 0.05, OutputPerMillion: 0.20},
+		{ID: "qwen-coder", Name: "Qwen Coder", Provider: "qwen", InputPerMillion: 0.30, OutputPerMillion: 1.50},
+
+		// ─── Kimi / Moonshot (platform.moonshot.ai, March 2026) ───
+		{ID: "kimi-v1-8k", Name: "Moonshot v1 8K", Provider: "kimi", InputPerMillion: 0.20, OutputPerMillion: 2.00, IsDefault: true},
+		{ID: "kimi-v1-32k", Name: "Moonshot v1 32K", Provider: "kimi", InputPerMillion: 1.00, OutputPerMillion: 3.00},
+		{ID: "kimi-v1-128k", Name: "Moonshot v1 128K", Provider: "kimi", InputPerMillion: 2.00, OutputPerMillion: 5.00},
+
+		// ─── Zhipu AI / GLM (z.ai, March 2026) ───
+		{ID: "zhipu-glm47", Name: "GLM-4.7", Provider: "zhipu", InputPerMillion: 0.60, OutputPerMillion: 2.20, IsDefault: true},
+		{ID: "zhipu-glm46", Name: "GLM-4.6", Provider: "zhipu", InputPerMillion: 0.60, OutputPerMillion: 2.20},
+		{ID: "zhipu-glm47-flashx", Name: "GLM-4.7 FlashX", Provider: "zhipu", InputPerMillion: 0.07, OutputPerMillion: 0.40},
+
+		// ─── Meta AI (llama.com, March 2026) ───
+		{ID: "meta-llama4", Name: "Llama 4 Maverick", Provider: "meta", InputPerMillion: 0.00, OutputPerMillion: 0.00, IsDefault: true},
+
+		// ─── OpenRouter (openrouter.ai, pass-through pricing, March 2026) ───
+		{ID: "openrouter-default", Name: "OpenRouter (varies by model)", Provider: "openrouter", InputPerMillion: 1.00, OutputPerMillion: 5.00, IsDefault: true},
+
+		// ─── Groq (groq.com/pricing, March 2026) ───
+		{ID: "groq-llama33-70b", Name: "Llama 3.3 70B", Provider: "groq", InputPerMillion: 0.59, OutputPerMillion: 0.79, IsDefault: true},
+		{ID: "groq-llama31-8b", Name: "Llama 3.1 8B", Provider: "groq", InputPerMillion: 0.05, OutputPerMillion: 0.08},
+		{ID: "groq-deepseek-r1", Name: "DeepSeek R1 Distill 70B", Provider: "groq", InputPerMillion: 0.75, OutputPerMillion: 0.99},
+
+		// ─── Together AI (together.ai/pricing, March 2026) ───
+		{ID: "together-llama33-70b", Name: "Llama 3.3 70B", Provider: "together", InputPerMillion: 0.88, OutputPerMillion: 0.88, IsDefault: true},
+		{ID: "together-llama31-405b", Name: "Llama 3.1 405B", Provider: "together", InputPerMillion: 3.50, OutputPerMillion: 3.50},
+
+		// ─── Fireworks AI (fireworks.ai/pricing, March 2026) ───
+		{ID: "fireworks-llama33-70b", Name: "Llama 3.3 70B", Provider: "fireworks", InputPerMillion: 0.90, OutputPerMillion: 0.90, IsDefault: true},
+		{ID: "fireworks-llama31-405b", Name: "Llama 3.1 405B", Provider: "fireworks", InputPerMillion: 3.00, OutputPerMillion: 3.00},
+
+		// ─── Hugging Face (huggingface.co, compute-based, March 2026) ───
+		{ID: "hf-serverless", Name: "HF Serverless (estimate)", Provider: "huggingface", InputPerMillion: 0.10, OutputPerMillion: 0.30, IsDefault: true},
+
+		// ─── MiniMax (minimaxi.com, March 2026) ───
+		{ID: "minimax-m25", Name: "MiniMax M2.5", Provider: "minimax", InputPerMillion: 0.27, OutputPerMillion: 0.95, IsDefault: true},
+
+		// ─── Perplexity (perplexity.ai/pricing, March 2026) ───
+		{ID: "perplexity-sonar", Name: "Sonar", Provider: "perplexity", InputPerMillion: 1.00, OutputPerMillion: 1.00, IsDefault: true},
+		{ID: "perplexity-sonar-pro", Name: "Sonar Pro", Provider: "perplexity", InputPerMillion: 3.00, OutputPerMillion: 15.00},
+
+		// ─── Cerebras (cerebras.ai/pricing, March 2026) ───
+		{ID: "cerebras-llama31-70b", Name: "Llama 3.1 70B", Provider: "cerebras", InputPerMillion: 0.60, OutputPerMillion: 0.60, IsDefault: true},
+
+		// ─── DeepInfra (deepinfra.com, March 2026) ───
+		{ID: "deepinfra-llama33-70b", Name: "Llama 3.3 70B", Provider: "deepinfra", InputPerMillion: 0.23, OutputPerMillion: 0.40, IsDefault: true},
+
+		// ─── SiliconFlow (siliconflow.cn, March 2026) ───
+		{ID: "siliconflow-default", Name: "SiliconFlow (varies)", Provider: "siliconflow", InputPerMillion: 0.10, OutputPerMillion: 0.30, IsDefault: true},
+
+		// ─── Manus AI (manus.im, agent platform, March 2026) ───
+		{ID: "manus-agent", Name: "Manus Agent", Provider: "manus", InputPerMillion: 0.00, OutputPerMillion: 0.00, IsDefault: true},
+
+		// ─── Custom (user enters their own rates) ───
+		{ID: "custom-default", Name: "Custom Provider", Provider: "custom", InputPerMillion: 1.00, OutputPerMillion: 3.00, IsDefault: true},
+
+		// ─── Local / Self-hosted (always free) ───
+		{ID: "local-free", Name: "Local / Ollama", Provider: "local", InputPerMillion: 0.00, OutputPerMillion: 0.00, IsDefault: true},
 	}
 
 	for _, p := range defaults {

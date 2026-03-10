@@ -2228,7 +2228,14 @@ function loadPricing() {
 
             var providerColors = {
                 openai: '#10a37f', anthropic: '#d4a574', google: '#4285f4',
-                mistral: '#ff6b35', groq: '#f55036', local: '#888'
+                xai: '#1da1f2', deepseek: '#4d6bfe', mistral: '#ff6b35',
+                cohere: '#39594d', nvidia: '#76b900', qwen: '#6f42c1',
+                kimi: '#ff9500', zhipu: '#2352d8', meta: '#0668e1',
+                openrouter: '#6366f1', groq: '#f55036', together: '#0ea5e9',
+                fireworks: '#ff4500', huggingface: '#ffcc00', minimax: '#e040fb',
+                perplexity: '#20808d', cerebras: '#ff6b00', deepinfra: '#7c3aed',
+                siliconflow: '#00bcd4', manus: '#8b5cf6',
+                custom: '#9b59b6', local: '#888'
             };
 
             Object.keys(groups).sort().forEach(function (provider) {
