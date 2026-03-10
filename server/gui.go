@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/David2024patton/itak-shield/auth"
+	shielddb "github.com/David2024patton/itak-shield/db"
 	"github.com/David2024patton/itak-shield/guard"
 	"github.com/David2024patton/itak-shield/proxy"
 )
@@ -33,6 +34,8 @@ type GUIServer struct {
 	bindAddr    string
 	authMgr     *auth.Manager
 	guardInst   *guard.InputGuard
+	db          *shielddb.DB
+	backupStop  chan struct{}
 }
 
 // LogEntry represents a single activity log entry for the GUI.
@@ -67,12 +70,33 @@ func NewGUI(version string, bindAddr string) *GUIServer {
 		bindAddr = "127.0.0.1"
 	}
 
-	// Initialize auth manager with persistent file store.
-	store := auth.NewFileStore(filepath.Join(".", "shield-users.json"))
-	authMgr := auth.New(store, "")
+	// Initialize SQLite database (replaces legacy JSON store).
+	dbPath := filepath.Join(".", "shield.db")
+	jsonPath := filepath.Join(".", "shield-users.json")
+	database, err := shielddb.Open(dbPath, jsonPath)
+	if err != nil {
+		log.Printf("[shield] WARNING: SQLite init failed, falling back to JSON: %v", err)
+		store := auth.NewFileStore(jsonPath)
+		authMgr := auth.New(store, "")
+		g := guard.NewInputGuard()
+		return &GUIServer{version: version, bindAddr: bindAddr, authMgr: authMgr, guardInst: g}
+	}
+
+	authMgr := auth.New(database, "")
 	g := guard.NewInputGuard()
 
-	return &GUIServer{version: version, bindAddr: bindAddr, authMgr: authMgr, guardInst: g}
+	// Start automatic backups (default: every 12 hours).
+	backupCfg := shielddb.DefaultBackupConfig()
+	backupStop := database.StartAutoBackup(backupCfg)
+
+	return &GUIServer{
+		version:    version,
+		bindAddr:   bindAddr,
+		authMgr:    authMgr,
+		guardInst:  g,
+		db:         database,
+		backupStop: backupStop,
+	}
 }
 
 // Serve starts the GUI server on the given port, serving the embedded web content.
@@ -98,6 +122,21 @@ func (g *GUIServer) Serve(webFS embed.FS, guiPort int) error {
 	mux.HandleFunc("/api/users/", g.handleUserByID)
 	mux.HandleFunc("/api/tokens", g.handleTokens)
 	mux.HandleFunc("/api/tokens/revoke", g.handleRevokeToken)
+
+	// User profiles (enriched data with spend + provider)
+	mux.HandleFunc("/api/profiles", g.handleProfiles)
+	mux.HandleFunc("/api/profiles/", g.handleProfileByID)
+
+	// Backups
+	mux.HandleFunc("/api/backups", g.handleBackups)
+	mux.HandleFunc("/api/backups/create", g.handleBackupCreate)
+	mux.HandleFunc("/api/backups/restore", g.handleBackupRestore)
+
+	// Audit events
+	mux.HandleFunc("/api/events", g.handleEvents)
+
+	// Settings
+	mux.HandleFunc("/api/settings", g.handleSettings)
 
 	// Guard (prompt injection defense)
 	mux.HandleFunc("/api/guard/scan", g.handleGuardScan)
@@ -565,6 +604,269 @@ func (g *GUIServer) handleGuardConfig(w http.ResponseWriter, r *http.Request) {
 		g.guardInst.SetSensitivity(guard.Severity(req.Sensitivity))
 		log.Printf("[iTaK Shield] Guard sensitivity set to %d", req.Sensitivity)
 		writeJSON(w, map[string]interface{}{"ok": true, "sensitivity": req.Sensitivity})
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// ─── User Profile Handlers ───────────────────────
+
+// handleProfiles lists all user profiles with enriched data.
+func (g *GUIServer) handleProfiles(w http.ResponseWriter, r *http.Request) {
+	if g.db == nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": "Database not initialized"})
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		profiles, err := g.db.ListUserProfiles()
+		if err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+			return
+		}
+
+		// Mask upstream keys in response for security.
+		for i := range profiles {
+			if key := profiles[i].UpstreamKey; len(key) > 8 {
+				profiles[i].UpstreamKey = key[:4] + "..." + key[len(key)-4:]
+			}
+		}
+
+		writeJSON(w, map[string]interface{}{"ok": true, "profiles": profiles})
+
+	case http.MethodPost:
+		// Create user with profile info.
+		var req struct {
+			Name        string `json:"name"`
+			Email       string `json:"email"`
+			Group       string `json:"group"`
+			Type        string `json:"type"` // "personal" or "business"
+			Provider    string `json:"provider"`
+			UpstreamKey string `json:"upstream_key"`
+			RateLimit   int    `json:"rate_limit"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": "Invalid request body"})
+			return
+		}
+		if req.Name == "" {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": "Name is required"})
+			return
+		}
+		if req.Group == "" {
+			req.Group = "default"
+		}
+		if req.Type == "" {
+			req.Type = "personal"
+		}
+
+		user, err := g.authMgr.CreateUser(req.Name, req.Email, req.Group, req.RateLimit)
+		if err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+			return
+		}
+
+		// Update profile fields.
+		if req.Provider != "" || req.UpstreamKey != "" || req.Type != "" {
+			_ = g.db.UpdateUserProfile(user.ID, req.Type, req.Provider, req.UpstreamKey)
+		}
+
+		// Auto-generate a Shield API token for the new user.
+		token, _ := g.authMgr.GenerateToken(user.ID, "default", nil)
+
+		writeJSON(w, map[string]interface{}{
+			"ok":    true,
+			"user":  user,
+			"token": token,
+		})
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleProfileByID handles single-user profile operations.
+func (g *GUIServer) handleProfileByID(w http.ResponseWriter, r *http.Request) {
+	if g.db == nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": "Database not initialized"})
+		return
+	}
+
+	// Extract user ID from URL: /api/profiles/{id}
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/profiles/"), "/")
+	if len(parts) == 0 || parts[0] == "" {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": "User ID required"})
+		return
+	}
+	userID := parts[0]
+
+	switch r.Method {
+	case http.MethodGet:
+		profile, err := g.db.GetUserProfile(userID)
+		if err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+			return
+		}
+		// Mask key.
+		if key := profile.UpstreamKey; len(key) > 8 {
+			profile.UpstreamKey = key[:4] + "..." + key[len(key)-4:]
+		}
+		writeJSON(w, map[string]interface{}{"ok": true, "profile": profile})
+
+	case http.MethodPut:
+		var req struct {
+			Type        string `json:"type"`
+			Provider    string `json:"provider"`
+			UpstreamKey string `json:"upstream_key"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": "Invalid request body"})
+			return
+		}
+		if err := g.db.UpdateUserProfile(userID, req.Type, req.Provider, req.UpstreamKey); err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+			return
+		}
+		writeJSON(w, map[string]interface{}{"ok": true})
+
+	case http.MethodDelete:
+		if err := g.authMgr.DeleteUser(userID); err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+			return
+		}
+		writeJSON(w, map[string]interface{}{"ok": true})
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// ─── Backup Handlers ────────────────────────────
+
+// handleBackups lists all backup files.
+func (g *GUIServer) handleBackups(w http.ResponseWriter, r *http.Request) {
+	if g.db == nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": "Database not initialized"})
+		return
+	}
+
+	backups, err := g.db.ListBackups("")
+	if err != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+		return
+	}
+
+	writeJSON(w, map[string]interface{}{"ok": true, "backups": backups})
+}
+
+// handleBackupCreate triggers a manual backup.
+func (g *GUIServer) handleBackupCreate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if g.db == nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": "Database not initialized"})
+		return
+	}
+
+	path, err := g.db.Backup("")
+	if err != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+		return
+	}
+
+	// Prune old backups.
+	_ = g.db.PruneBackups("", 5)
+
+	writeJSON(w, map[string]interface{}{"ok": true, "path": path})
+}
+
+// handleBackupRestore restores a previous backup.
+func (g *GUIServer) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if g.db == nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": "Database not initialized"})
+		return
+	}
+
+	var req struct {
+		Path string `json:"path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Path == "" {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": "Backup path required"})
+		return
+	}
+
+	if err := g.db.RestoreBackup(req.Path); err != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+		return
+	}
+
+	writeJSON(w, map[string]interface{}{"ok": true, "restored": req.Path})
+}
+
+// ─── Audit Events Handler ───────────────────────
+
+func (g *GUIServer) handleEvents(w http.ResponseWriter, r *http.Request) {
+	if g.db == nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": "Database not initialized"})
+		return
+	}
+
+	limit := 50
+	eventType := r.URL.Query().Get("type")
+
+	events, err := g.db.RecentEvents(limit, eventType)
+	if err != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+		return
+	}
+
+	writeJSON(w, map[string]interface{}{"ok": true, "events": events})
+}
+
+// ─── Settings Handler ───────────────────────────
+
+func (g *GUIServer) handleSettings(w http.ResponseWriter, r *http.Request) {
+	if g.db == nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": "Database not initialized"})
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		key := r.URL.Query().Get("key")
+		if key == "" {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": "Setting key required"})
+			return
+		}
+		val, err := g.db.GetSetting(key)
+		if err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+			return
+		}
+		writeJSON(w, map[string]interface{}{"ok": true, "key": key, "value": val})
+
+	case http.MethodPost:
+		var req struct {
+			Key   string `json:"key"`
+			Value string `json:"value"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Key == "" {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": "Key and value required"})
+			return
+		}
+		if err := g.db.SetSetting(req.Key, req.Value); err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+			return
+		}
+		writeJSON(w, map[string]interface{}{"ok": true})
 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
