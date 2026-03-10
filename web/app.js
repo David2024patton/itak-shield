@@ -2123,7 +2123,7 @@ var _origSwitchTab = switchTab;
 switchTab = function (tab) {
     _origSwitchTab(tab);
     if (tab === 'users') loadUserProfiles();
-    if (tab === 'settings') loadBackups();
+    if (tab === 'settings') { loadBackups(); loadPricing(); }
 };
 
 // ─── Backup Management ──────────────────────────
@@ -2193,4 +2193,85 @@ function restoreBackup(path) {
             }
         })
         .catch(function () { alert('Failed to restore backup.'); });
+}
+
+// ─── Pricing Management ────────────────────────
+
+function loadPricing() {
+    fetch('/api/pricing')
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            var container = document.getElementById('pricingTable');
+            if (!container) return;
+
+            var profiles = data.profiles || [];
+            if (profiles.length === 0) {
+                container.innerHTML = '<p class="text-secondary" style="font-size:0.75rem;">No pricing profiles configured.</p>';
+                return;
+            }
+
+            // Group by provider.
+            var groups = {};
+            profiles.forEach(function (p) {
+                var key = p.provider || 'other';
+                if (!groups[key]) groups[key] = [];
+                groups[key].push(p);
+            });
+
+            var html = '<table style="width:100%;border-collapse:collapse;font-size:0.8rem;">';
+            html += '<thead><tr style="border-bottom:1px solid var(--border);text-align:left;">';
+            html += '<th style="padding:0.35rem 0.5rem;">Provider</th>';
+            html += '<th style="padding:0.35rem 0.5rem;">Model</th>';
+            html += '<th style="padding:0.35rem 0.5rem;text-align:right;">Input $/1M</th>';
+            html += '<th style="padding:0.35rem 0.5rem;text-align:right;">Output $/1M</th>';
+            html += '</tr></thead><tbody>';
+
+            var providerColors = {
+                openai: '#10a37f', anthropic: '#d4a574', google: '#4285f4',
+                mistral: '#ff6b35', groq: '#f55036', local: '#888'
+            };
+
+            Object.keys(groups).sort().forEach(function (provider) {
+                var color = providerColors[provider] || '#888';
+                groups[provider].forEach(function (p) {
+                    html += '<tr style="border-bottom:1px solid var(--border);">';
+                    html += '<td style="padding:0.35rem 0.5rem;"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + color + ';margin-right:0.4rem;"></span>' + provider + '</td>';
+                    html += '<td style="padding:0.35rem 0.5rem;">' + p.name;
+                    if (p.is_default) html += ' <span style="font-size:0.6rem;color:var(--primary);border:1px solid var(--primary);border-radius:3px;padding:0 3px;">DEFAULT</span>';
+                    html += '</td>';
+                    html += '<td style="padding:0.35rem 0.5rem;text-align:right;"><input type="number" step="0.01" min="0" value="' + p.input_per_million.toFixed(2) + '" style="width:70px;background:rgba(0,0,0,0.3);border:1px solid var(--border);border-radius:4px;color:var(--text-primary);padding:2px 6px;font-size:0.75rem;text-align:right;" onchange="savePricingRate(\'' + p.id + '\',\'' + p.name + '\',\'' + p.provider + '\',' + (p.is_default ? 'true' : 'false') + ',parseFloat(this.value),' + p.output_per_million + ')"></td>';
+                    html += '<td style="padding:0.35rem 0.5rem;text-align:right;"><input type="number" step="0.01" min="0" value="' + p.output_per_million.toFixed(2) + '" style="width:70px;background:rgba(0,0,0,0.3);border:1px solid var(--border);border-radius:4px;color:var(--text-primary);padding:2px 6px;font-size:0.75rem;text-align:right;" onchange="savePricingRate(\'' + p.id + '\',\'' + p.name + '\',\'' + p.provider + '\',' + (p.is_default ? 'true' : 'false') + ',' + p.input_per_million + ',parseFloat(this.value))"></td>';
+                    html += '</tr>';
+                });
+            });
+
+            html += '</tbody></table>';
+            container.innerHTML = html;
+        })
+        .catch(function () {
+            var container = document.getElementById('pricingTable');
+            if (container) container.innerHTML = '<p class="text-secondary" style="font-size:0.75rem;">Failed to load pricing.</p>';
+        });
+}
+
+function savePricingRate(id, name, provider, isDefault, inputRate, outputRate) {
+    fetch('/api/pricing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            id: id,
+            name: name,
+            provider: provider,
+            input_per_million: inputRate,
+            output_per_million: outputRate,
+            is_default: isDefault
+        })
+    })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            if (!data.ok) {
+                console.error('Failed to save pricing:', data.error);
+            }
+        })
+        .catch(function (err) { console.error('Pricing save error:', err); });
 }

@@ -841,6 +841,18 @@
           </div>
 
           <div class="info-card">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem;">
+              <h4 style="margin:0;">Billing & Pricing</h4>
+            </div>
+            <p class="text-secondary" style="margin-bottom:0.75rem;font-size:0.8rem;">
+              Pricing per 1 million tokens. Shield reads the <code>usage</code> field from API responses to calculate real-time spend per user. Edit rates to match your provider plan.
+            </p>
+            <div id="pricingTable" style="max-height:320px;overflow-y:auto;">
+              <p class="text-secondary" style="font-size:0.75rem;">Loading pricing...</p>
+            </div>
+          </div>
+
+          <div class="info-card">
             <h4>Database Backups</h4>
             <p class="text-secondary" style="margin-bottom: 0.75rem;">
               Auto-backup runs every 12 hours. You can also trigger a manual backup or restore from a previous snapshot.

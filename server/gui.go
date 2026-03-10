@@ -85,6 +85,9 @@ func NewGUI(version string, bindAddr string) *GUIServer {
 	authMgr := auth.New(database, "")
 	g := guard.NewInputGuard()
 
+	// Seed default provider pricing if none exist.
+	database.SeedDefaultPricing()
+
 	// Start automatic backups (default: every 12 hours).
 	backupCfg := shielddb.DefaultBackupConfig()
 	backupStop := database.StartAutoBackup(backupCfg)
@@ -137,6 +140,10 @@ func (g *GUIServer) Serve(webFS embed.FS, guiPort int) error {
 
 	// Settings
 	mux.HandleFunc("/api/settings", g.handleSettings)
+
+	// Pricing & billing
+	mux.HandleFunc("/api/pricing", g.handlePricing)
+	mux.HandleFunc("/api/billing/", g.handleBilling)
 
 	// Guard (prompt injection defense)
 	mux.HandleFunc("/api/guard/scan", g.handleGuardScan)
@@ -863,6 +870,99 @@ func (g *GUIServer) handleSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := g.db.SetSetting(req.Key, req.Value); err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+			return
+		}
+		writeJSON(w, map[string]interface{}{"ok": true})
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// ─── Pricing & Billing Handlers ─────────────────
+
+// handlePricing manages provider pricing profiles.
+func (g *GUIServer) handlePricing(w http.ResponseWriter, r *http.Request) {
+	if g.db == nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": "Database not initialized"})
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		profiles, err := g.db.ListPricingProfiles()
+		if err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+			return
+		}
+		writeJSON(w, map[string]interface{}{"ok": true, "profiles": profiles})
+
+	case http.MethodPost:
+		var req shielddb.PricingProfile
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": "Invalid request body"})
+			return
+		}
+		if req.ID == "" || req.Name == "" {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": "ID and name required"})
+			return
+		}
+		if err := g.db.UpsertPricingProfile(req); err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+			return
+		}
+		writeJSON(w, map[string]interface{}{"ok": true})
+
+	case http.MethodDelete:
+		id := r.URL.Query().Get("id")
+		if id == "" {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": "Pricing profile ID required"})
+			return
+		}
+		if err := g.db.DeletePricingProfile(id); err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+			return
+		}
+		writeJSON(w, map[string]interface{}{"ok": true})
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleBilling manages per-user billing configuration.
+func (g *GUIServer) handleBilling(w http.ResponseWriter, r *http.Request) {
+	if g.db == nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": "Database not initialized"})
+		return
+	}
+
+	// Extract user ID: /api/billing/{userId}
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/billing/"), "/")
+	if len(parts) == 0 || parts[0] == "" {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": "User ID required"})
+		return
+	}
+	userID := parts[0]
+
+	switch r.Method {
+	case http.MethodGet:
+		billing, err := g.db.GetUserBilling(userID)
+		if err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+			return
+		}
+		writeJSON(w, map[string]interface{}{"ok": true, "billing": billing})
+
+	case http.MethodPut:
+		var req shielddb.UserBillingInfo
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": "Invalid request body"})
+			return
+		}
+		req.UserID = userID
+		if err := g.db.UpsertUserBilling(req); err != nil {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
 			return
 		}
