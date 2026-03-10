@@ -1779,3 +1779,109 @@ document.addEventListener('DOMContentLoaded', function () {
         navigator.serviceWorker.register('/sw.js').catch(function () { });
     }
 });
+
+// ─── Guard / Security ────────────────────────
+
+function testGuard() {
+    var text = document.getElementById('guardTestInput').value.trim();
+    var source = document.getElementById('guardTestSource').value;
+
+    if (!text) {
+        alert('Please enter some text to scan.');
+        return;
+    }
+
+    fetch('/api/guard/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: text, source: source })
+    })
+        .then(function (resp) { return resp.json(); })
+        .then(function (data) {
+            if (!data.ok) {
+                alert('Error: ' + (data.error || 'Unknown'));
+                return;
+            }
+            renderGuardResult(data);
+        })
+        .catch(function (err) {
+            alert('Scan failed: ' + err.message);
+        });
+}
+
+function renderGuardResult(data) {
+    var container = document.getElementById('guardResult');
+    var card = document.getElementById('guardResultCard');
+    var icon = document.getElementById('guardResultIcon');
+    var verdict = document.getElementById('guardResultVerdict');
+    var severity = document.getElementById('guardResultSeverity');
+    var action = document.getElementById('guardResultAction');
+    var source = document.getElementById('guardResultSource');
+    var time = document.getElementById('guardResultTime');
+    var reasonsRow = document.getElementById('guardReasonsRow');
+    var reasons = document.getElementById('guardResultReasons');
+
+    container.style.display = '';
+
+    // Clear classes
+    card.className = 'guard-result-card';
+
+    if (data.blocked) {
+        card.classList.add('blocked');
+        icon.textContent = '\u26D4';
+        verdict.textContent = 'BLOCKED';
+        verdict.style.color = 'var(--danger)';
+    } else if (data.severity === 'MEDIUM' || data.severity === 'LOW') {
+        card.classList.add('warn');
+        icon.textContent = '\u26A0\uFE0F';
+        verdict.textContent = 'FLAGGED';
+        verdict.style.color = 'var(--warning)';
+    } else {
+        card.classList.add('safe');
+        icon.textContent = '\u2705';
+        verdict.textContent = 'SAFE';
+        verdict.style.color = 'var(--success)';
+    }
+
+    // Severity badge
+    severity.textContent = data.severity;
+    severity.className = 'info-val guard-severity sev-' + data.severity.toLowerCase();
+
+    action.textContent = data.action;
+    source.textContent = data.source;
+    time.textContent = (data.scan_ms || 0) + 'ms';
+
+    // Reasons
+    if (data.reasons && data.reasons.length > 0) {
+        reasonsRow.style.display = '';
+        reasons.textContent = data.reasons.join(', ');
+    } else {
+        reasonsRow.style.display = 'none';
+    }
+}
+
+function setGuardSensitivity(level) {
+    var btns = document.querySelectorAll('#guardSensitivity .mode-btn');
+    btns.forEach(function (btn) { btn.classList.remove('active'); });
+
+    var labels = { 2: 'Paranoid', 3: 'Default', 4: 'Relaxed' };
+    btns.forEach(function (btn) {
+        if (btn.textContent.trim() === labels[level]) {
+            btn.classList.add('active');
+        }
+    });
+
+    var descs = {
+        2: 'Paranoid: Blocks MEDIUM severity and above. Maximum protection, may have false positives.',
+        3: 'Default: Blocks HIGH severity and above. Good balance of security and usability.',
+        4: 'Relaxed: Blocks CRITICAL severity only. Minimum protection, low false positives.'
+    };
+    var desc = document.getElementById('guardSensitivityDesc');
+    if (desc) desc.textContent = descs[level] || '';
+
+    fetch('/api/guard/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sensitivity: level })
+    }).catch(function () { });
+}

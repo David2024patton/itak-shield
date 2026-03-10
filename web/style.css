@@ -1583,3 +1583,172 @@ a:hover { text-decoration: underline; }
   .provider-grid { grid-template-columns: 1fr 1fr; }
   .featured-grid { grid-template-columns: 1fr 1fr; }
 }
+
+/* ─── Guard / Security ───────────────────── */
+
+.guard-result-card {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 1rem;
+  animation: panelFade 0.25s ease;
+}
+
+.guard-result-card.safe {
+  border-color: var(--success);
+  background: var(--success-bg);
+}
+
+.guard-result-card.blocked {
+  border-color: var(--danger);
+  background: rgba(248, 81, 73, 0.1);
+}
+
+.guard-result-card.warn {
+  border-color: var(--warning);
+  background: var(--warning-bg);
+}
+
+.guard-result-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid rgba(48, 54, 61, 0.5);
+}
+
+.guard-result-icon { font-size: 1.25rem; }
+
+.guard-result-verdict {
+  font-size: 1rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.guard-severity {
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 0.8rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: var(--radius-xs);
+}
+
+.guard-severity.sev-safe { background: var(--success-bg); color: var(--success); }
+.guard-severity.sev-low { background: var(--info-bg); color: var(--info); }
+.guard-severity.sev-medium { background: var(--warning-bg); color: var(--warning); }
+.guard-severity.sev-high { background: rgba(248, 81, 73, 0.15); color: var(--danger); }
+.guard-severity.sev-critical { background: rgba(248, 81, 73, 0.25); color: #ff4444; font-weight: 700; }
+
+.guard-categories {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.guard-category {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+}
+
+.guard-cat-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  flex-shrink: 0;
+  min-width: 62px;
+  text-align: center;
+}
+
+.guard-cat-badge.critical { background: rgba(248, 81, 73, 0.2); color: #ff4444; }
+.guard-cat-badge.high { background: rgba(248, 81, 73, 0.12); color: var(--danger); }
+.guard-cat-badge.medium { background: var(--warning-bg); color: var(--warning); }
+.guard-cat-badge.low { background: var(--info-bg); color: var(--info); }
+
+.guard-cat-name {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  min-width: 170px;
+  flex-shrink: 0;
+}
+
+.guard-cat-desc {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.guard-escalation-demo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.escalation-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.6rem 1rem;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-xs);
+}
+
+.escalation-source {
+  font-size: 0.85rem;
+  font-weight: 500;
+  min-width: 120px;
+}
+
+.escalation-arrow {
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  color: var(--text-secondary);
+  flex: 1;
+  text-align: center;
+}
+
+.escalation-action {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0.2rem 0.6rem;
+  border-radius: 4px;
+  min-width: 65px;
+  text-align: center;
+}
+
+.escalation-action.warn { background: var(--warning-bg); color: var(--warning); }
+.escalation-action.block { background: rgba(248, 81, 73, 0.2); color: var(--danger); }
+
+textarea.form-input {
+  resize: vertical;
+  min-height: 60px;
+  font-family: inherit;
+}
+
+select.form-input {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%238b949e' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+  padding-right: 2rem;
+}
+
+@media (max-width: 768px) {
+  .guard-category { flex-wrap: wrap; }
+  .guard-cat-name { min-width: auto; }
+}

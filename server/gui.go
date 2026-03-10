@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/David2024patton/itak-shield/auth"
+	"github.com/David2024patton/itak-shield/guard"
 	"github.com/David2024patton/itak-shield/proxy"
 )
 
@@ -31,6 +32,7 @@ type GUIServer struct {
 	version     string
 	bindAddr    string
 	authMgr     *auth.Manager
+	guardInst   *guard.InputGuard
 }
 
 // LogEntry represents a single activity log entry for the GUI.
@@ -68,8 +70,9 @@ func NewGUI(version string, bindAddr string) *GUIServer {
 	// Initialize auth manager with persistent file store.
 	store := auth.NewFileStore(filepath.Join(".", "shield-users.json"))
 	authMgr := auth.New(store, "")
+	g := guard.NewInputGuard()
 
-	return &GUIServer{version: version, bindAddr: bindAddr, authMgr: authMgr}
+	return &GUIServer{version: version, bindAddr: bindAddr, authMgr: authMgr, guardInst: g}
 }
 
 // Serve starts the GUI server on the given port, serving the embedded web content.
@@ -95,6 +98,10 @@ func (g *GUIServer) Serve(webFS embed.FS, guiPort int) error {
 	mux.HandleFunc("/api/users/", g.handleUserByID)
 	mux.HandleFunc("/api/tokens", g.handleTokens)
 	mux.HandleFunc("/api/tokens/revoke", g.handleRevokeToken)
+
+	// Guard (prompt injection defense)
+	mux.HandleFunc("/api/guard/scan", g.handleGuardScan)
+	mux.HandleFunc("/api/guard/config", g.handleGuardConfig)
 
 	// Static files (the embedded web UI)
 	fileServer := http.FileServer(http.FS(subFS))
@@ -482,4 +489,84 @@ func (g *GUIServer) handleRevokeToken(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("[iTaK Shield] Token revoked for user %s", req.UserID)
 	writeJSON(w, map[string]interface{}{"ok": true})
+}
+
+// ── Guard (Prompt Injection Defense) Handlers ───────────────
+
+// handleGuardScan tests an input against the guard.
+func (g *GUIServer) handleGuardScan(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Text   string `json:"text"`
+		Source string `json:"source"` // "user", "email", "external", etc.
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": "Invalid request body"})
+		return
+	}
+	if req.Text == "" {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": "text is required"})
+		return
+	}
+	if req.Source == "" {
+		req.Source = "user"
+	}
+
+	result := g.guardInst.ScanInput(req.Text, req.Source)
+
+	writeJSON(w, map[string]interface{}{
+		"ok":       true,
+		"blocked":  result.Blocked,
+		"severity": result.Severity.String(),
+		"action":   result.Action.String(),
+		"reasons":  result.Reasons,
+		"source":   result.Source,
+		"scan_ms":  result.ScanTimeMs,
+	})
+}
+
+// handleGuardConfig gets or updates guard configuration.
+func (g *GUIServer) handleGuardConfig(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, map[string]interface{}{
+			"ok": true,
+			"categories": []map[string]interface{}{
+				{"name": "instruction_override", "severity": "CRITICAL", "description": "Attempts to override or ignore system instructions"},
+				{"name": "prompt_extraction", "severity": "CRITICAL", "description": "Attempts to reveal system prompts"},
+				{"name": "secret_exfil", "severity": "CRITICAL", "description": "Attempts to extract API keys, passwords, or credentials"},
+				{"name": "jailbreak", "severity": "HIGH", "description": "DAN, developer mode, unrestricted prompts"},
+				{"name": "role_manipulation", "severity": "HIGH", "description": "Attempts to change the AI's role or identity"},
+				{"name": "obfuscation", "severity": "HIGH", "description": "Base64, rot13, hex encoded injections"},
+				{"name": "tool_abuse", "severity": "HIGH", "description": "JSON tool calls embedded in external data"},
+				{"name": "context_manipulation", "severity": "MEDIUM", "description": "Attempts to change the task context"},
+				{"name": "social_engineering", "severity": "MEDIUM", "description": "Appeals to authority, urgency, trust"},
+				{"name": "unicode_tricks", "severity": "MEDIUM", "description": "Zero-width characters hiding content"},
+			},
+			"sensitivity_levels": []map[string]interface{}{
+				{"name": "PARANOID", "value": 2, "description": "Blocks MEDIUM severity and above"},
+				{"name": "DEFAULT", "value": 3, "description": "Blocks HIGH severity and above"},
+				{"name": "RELAXED", "value": 4, "description": "Blocks CRITICAL severity only"},
+			},
+		})
+
+	case http.MethodPost:
+		var req struct {
+			Sensitivity int `json:"sensitivity"` // 2=paranoid, 3=default, 4=relaxed
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": "Invalid request body"})
+			return
+		}
+		g.guardInst.SetSensitivity(guard.Severity(req.Sensitivity))
+		log.Printf("[iTaK Shield] Guard sensitivity set to %d", req.Sensitivity)
+		writeJSON(w, map[string]interface{}{"ok": true, "sensitivity": req.Sensitivity})
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
 }
