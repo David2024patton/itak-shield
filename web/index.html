@@ -16,6 +16,9 @@
 
 <body>
 
+  <!-- Skip-to-content (accessibility: first focusable element) -->
+  <a class="skip-link" href="#mainContentArea">Skip to main content</a>
+
   <!-- ═══════════════════════════════════════
        WIZARD OVERLAY (first-run setup)
        ═══════════════════════════════════════ -->
@@ -240,8 +243,8 @@
   <div class="app-shell" id="appShell" style="display: none;">
 
     <!-- Mobile hamburger -->
-    <button class="hamburger" id="hamburgerBtn" onclick="toggleMobileDrawer()">
-      <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
+    <button class="hamburger" id="hamburgerBtn" onclick="toggleMobileDrawer()" aria-label="Open navigation menu">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
         <rect y="3" width="20" height="2" rx="1" />
         <rect y="9" width="20" height="2" rx="1" />
         <rect y="15" width="20" height="2" rx="1" />
@@ -261,7 +264,7 @@
         <span class="sidebar-brand-text">iTaK Shield</span>
       </div>
 
-      <nav class="sidebar-nav" id="sidebarNav">
+      <nav class="sidebar-nav" id="sidebarNav" aria-label="Dashboard navigation">
         <button class="nav-item active" data-tab="overview" onclick="switchTab('overview')">
           <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor">
             <path
@@ -318,8 +321,8 @@
       </nav>
 
       <!-- Sidebar collapse toggle -->
-      <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()">
-        <svg class="toggle-arrow" viewBox="0 0 20 20" fill="currentColor">
+      <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()" aria-label="Collapse sidebar">
+        <svg class="toggle-arrow" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
           <path fill-rule="evenodd"
             d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z"
             clip-rule="evenodd" />
@@ -345,7 +348,7 @@
         </div>
       </div>
 
-      <div class="content-scroll">
+      <div class="content-scroll" id="mainContentArea">
 
         <!-- ══════ TAB: Overview ══════ -->
         <section class="tab-panel active" id="panelOverview" data-tab="overview">
@@ -525,7 +528,7 @@
               <span class="help-icon help-icon-sm"
                 data-help="Controls how aggressively the guard blocks inputs. Paranoid blocks most things, Relaxed only blocks the worst attacks.">?</span>
             </h4>
-            <div class="mode-toggle" id="guardSensitivity">
+            <div class="mode-toggle" id="guardSensitivity" role="radiogroup" aria-label="Guard sensitivity level">
               <button class="mode-btn" onclick="setGuardSensitivity(2)">Paranoid</button>
               <button class="mode-btn active" onclick="setGuardSensitivity(3)">Default</button>
               <button class="mode-btn" onclick="setGuardSensitivity(4)">Relaxed</button>
@@ -541,7 +544,8 @@
             </h4>
             <div class="form-group">
               <label class="form-label" for="guardTestInput">Input to scan</label>
-              <textarea class="form-input" id="guardTestInput" rows="3" placeholder="Type a message to test... e.g. 'Ignore all previous instructions'"></textarea>
+              <textarea class="form-input" id="guardTestInput" rows="3" placeholder="Type a message to test... e.g. 'Ignore all previous instructions'" aria-describedby="guardTestHint"></textarea>
+              <p class="form-hint" id="guardTestHint">Paste any text to see how the guard would classify it.</p>
             </div>
             <div class="form-row-split" style="align-items: flex-end;">
               <div class="form-group">
@@ -556,12 +560,12 @@
                 </select>
               </div>
               <div class="form-group" style="flex: 0;">
-                <button class="btn btn-primary" onclick="testGuard()">Scan</button>
+                <button class="btn btn-primary" onclick="testGuard()" aria-label="Scan input for threats">Scan</button>
               </div>
             </div>
 
             <!-- Scan Result -->
-            <div id="guardResult" style="display: none; margin-top: 1rem;">
+            <div id="guardResult" style="display: none; margin-top: 1rem;" aria-live="polite" aria-atomic="true">
               <div class="guard-result-card" id="guardResultCard">
                 <div class="guard-result-header">
                   <span class="guard-result-icon" id="guardResultIcon"></span>
