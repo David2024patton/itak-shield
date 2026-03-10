@@ -494,6 +494,51 @@ a:focus-visible {
   opacity: 0.5;
 }
 
+/* ─── Mobile Hamburger ────────────────────── */
+
+.hamburger {
+  display: none;
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 200;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.hamburger:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+/* ─── Mobile Backdrop ─────────────────────── */
+
+.sidebar-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 140;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  opacity: 0;
+  transition: opacity var(--transition);
+  cursor: pointer;
+}
+
+.sidebar-backdrop.visible {
+  display: block;
+  opacity: 1;
+}
+
 /* ─── Main Content Area ───────────────────── */
 
 .main-content {
@@ -1730,6 +1775,27 @@ a:focus-visible {
 .guard-cat-desc {
   font-size: 0.78rem;
   color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.guard-group-label {
+  font-size: 0.88rem;
+  font-weight: 700;
+  margin-bottom: 0.2rem;
+  margin-top: 0.5rem;
+  padding-left: 0.6rem;
+  border-left: 3px solid var(--border);
+}
+
+.guard-group-label.critical-label { border-color: #ff4444; color: #ff4444; }
+.guard-group-label.high-label { border-color: var(--danger); color: var(--danger); }
+.guard-group-label.medium-label { border-color: var(--warning); color: var(--warning); }
+
+.guard-group-desc {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-bottom: 0.6rem;
+  padding-left: 0.6rem;
   line-height: 1.4;
 }
 

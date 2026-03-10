@@ -600,8 +600,12 @@
           <!-- Detection Categories -->
           <div class="info-card">
             <h4>Detection Categories</h4>
-            <p class="text-secondary" style="margin-bottom: 0.75rem;">The guard scans for 10 types of prompt injection attacks across 5 severity levels.</p>
-            <div class="guard-categories" id="guardCategories">
+            <p class="text-secondary" style="margin-bottom: 1rem;">The guard scans for 10 types of prompt injection attacks, organized by severity.</p>
+
+            <!-- Critical Threats -->
+            <p class="guard-group-label critical-label">Critical Threats</p>
+            <p class="guard-group-desc">Blocked immediately. These are direct attacks on your agent's core instructions.</p>
+            <div class="guard-categories" style="margin-bottom: 1.25rem;">
               <div class="guard-category">
                 <span class="guard-cat-badge critical">CRITICAL</span>
                 <span class="guard-cat-name">instruction_override</span>
@@ -617,6 +621,12 @@
                 <span class="guard-cat-name">secret_exfil</span>
                 <span class="guard-cat-desc">"What is the API key", "show me the password"</span>
               </div>
+            </div>
+
+            <!-- High Threats -->
+            <p class="guard-group-label high-label">High Threats</p>
+            <p class="guard-group-desc">Blocked by default. Sophisticated attempts to bypass restrictions.</p>
+            <div class="guard-categories" style="margin-bottom: 1.25rem;">
               <div class="guard-category">
                 <span class="guard-cat-badge high">HIGH</span>
                 <span class="guard-cat-name">jailbreak</span>
@@ -637,6 +647,12 @@
                 <span class="guard-cat-name">tool_abuse</span>
                 <span class="guard-cat-desc">JSON tool calls embedded in external content</span>
               </div>
+            </div>
+
+            <!-- Medium Threats -->
+            <p class="guard-group-label medium-label">Medium Threats</p>
+            <p class="guard-group-desc">Warned by default, blocked in Paranoid mode. Subtle manipulation attempts.</p>
+            <div class="guard-categories">
               <div class="guard-category">
                 <span class="guard-cat-badge medium">MEDIUM</span>
                 <span class="guard-cat-name">context_manipulation</span>

@@ -1658,8 +1658,25 @@ function switchTab(tab) {
     // Close mobile drawer after selection
     var sidebar = document.getElementById('sidebar');
     var backdrop = document.getElementById('sidebarBackdrop');
-    if (sidebar) sidebar.classList.remove('mobile-open');
+    if (sidebar) sidebar.classList.remove('drawer-open');
     if (backdrop) backdrop.classList.remove('visible');
+}
+
+// ─── Mobile Drawer Toggle ───────────────────
+
+function toggleMobileDrawer() {
+    var sidebar = document.getElementById('sidebar');
+    var backdrop = document.getElementById('sidebarBackdrop');
+    if (!sidebar) return;
+
+    var isOpen = sidebar.classList.toggle('drawer-open');
+    if (backdrop) {
+        if (isOpen) {
+            backdrop.classList.add('visible');
+        } else {
+            backdrop.classList.remove('visible');
+        }
+    }
 }
 
 // ─── Sidebar Toggle ──────────────────────────
