@@ -310,6 +310,12 @@
           </svg>
           <span class="nav-label">Remote Access</span>
         </button>
+        <button class="nav-item" data-tab="users" onclick="switchTab('users')">
+          <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor">
+            <path d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" />
+          </svg>
+          <span class="nav-label">Users</span>
+        </button>
         <button class="nav-item" data-tab="settings" onclick="switchTab('settings')">
           <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor">
             <path fill-rule="evenodd"
@@ -772,6 +778,35 @@
           </div>
         </section>
 
+        <!-- ══════ TAB: Users ══════ -->
+        <section class="tab-panel" id="panelUsers" data-tab="users">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;flex-wrap:wrap;gap:0.5rem;">
+            <h2 class="section-title" style="margin:0;">User Management</h2>
+            <button class="btn btn-primary btn-sm" onclick="openAddUserModal()">+ Add User</button>
+          </div>
+
+          <div class="info-card" style="margin-bottom:1rem;">
+            <div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(120px,1fr));">
+              <div class="stat-card" style="padding:0.75rem;">
+                <div class="stat-value" id="usersTotalCount" style="font-size:1.3rem;">0</div>
+                <div class="stat-label" style="font-size:0.7rem;">Total Users</div>
+              </div>
+              <div class="stat-card" style="padding:0.75rem;">
+                <div class="stat-value" id="usersActiveTokens" style="font-size:1.3rem;">0</div>
+                <div class="stat-label" style="font-size:0.7rem;">Active Keys</div>
+              </div>
+              <div class="stat-card" style="padding:0.75rem;">
+                <div class="stat-value" id="usersTotalSpend" style="font-size:1.3rem;">$0.00</div>
+                <div class="stat-label" style="font-size:0.7rem;">Total Spend</div>
+              </div>
+            </div>
+          </div>
+
+          <div id="usersListContainer">
+            <p class="text-secondary" style="text-align:center;padding:2rem;">Loading users...</p>
+          </div>
+        </section>
+
         <!-- ══════ TAB: Settings ══════ -->
         <section class="tab-panel" id="panelSettings" data-tab="settings">
           <h2 class="section-title">Settings</h2>
@@ -806,10 +841,27 @@
           </div>
 
           <div class="info-card">
+            <h4>Database Backups</h4>
+            <p class="text-secondary" style="margin-bottom: 0.75rem;">
+              Auto-backup runs every 12 hours. You can also trigger a manual backup or restore from a previous snapshot.
+            </p>
+            <div class="wiz-actions" style="justify-content: flex-start; margin-bottom: 0.75rem;">
+              <button class="btn btn-primary btn-sm" onclick="createBackup()">Create Backup Now</button>
+            </div>
+            <div id="backupsList" style="max-height:200px;overflow-y:auto;">
+              <p class="text-secondary" style="font-size:0.75rem;">Loading...</p>
+            </div>
+          </div>
+
+          <div class="info-card">
             <h4>About</h4>
             <div class="info-row">
               <span class="info-key">Version</span>
-              <span class="info-val">0.2.0</span>
+              <span class="info-val">0.3.0</span>
+            </div>
+            <div class="info-row">
+              <span class="info-key">Storage</span>
+              <span class="info-val">SQLite (shield.db)</span>
             </div>
             <div class="info-row">
               <span class="info-key">GitHub</span>
@@ -840,6 +892,71 @@
       <div class="pwa-banner-actions">
         <button class="btn btn-primary btn-sm" id="pwaInstallBtn" onclick="pwaInstall()">Install</button>
         <button class="btn btn-ghost btn-sm" onclick="pwaDismiss()">Not now</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ Add User Modal ═══ -->
+  <div class="modal-overlay" id="addUserModal" style="display:none;">
+    <div class="modal-box" style="max-width:420px;">
+      <h3 style="margin-bottom:1rem;">Add New User</h3>
+      <div style="display:flex;flex-direction:column;gap:0.75rem;">
+        <div>
+          <label class="form-label">Name *</label>
+          <input type="text" class="form-input" id="addUserName" placeholder="e.g. John Smith" />
+        </div>
+        <div>
+          <label class="form-label">Email</label>
+          <input type="email" class="form-input" id="addUserEmail" placeholder="john@company.com" />
+        </div>
+        <div>
+          <label class="form-label">Account Type</label>
+          <select class="form-input" id="addUserType">
+            <option value="personal">Personal</option>
+            <option value="business">Business</option>
+          </select>
+        </div>
+        <div>
+          <label class="form-label">AI Provider</label>
+          <select class="form-input" id="addUserProvider">
+            <option value="">-- Select Provider --</option>
+            <option value="openai">OpenAI</option>
+            <option value="anthropic">Anthropic</option>
+            <option value="google">Google (Gemini)</option>
+            <option value="mistral">Mistral AI</option>
+            <option value="groq">Groq</option>
+            <option value="local">Local / Ollama</option>
+            <option value="custom">Custom Endpoint</option>
+          </select>
+        </div>
+        <div>
+          <label class="form-label">Upstream API Key</label>
+          <input type="password" class="form-input" id="addUserAPIKey" placeholder="sk-..." />
+          <p class="text-secondary" style="font-size:0.7rem;margin-top:0.25rem;">Their real API key. Shield will use this to forward requests to their provider.</p>
+        </div>
+        <div>
+          <label class="form-label">Rate Limit (requests/min, 0 = unlimited)</label>
+          <input type="number" class="form-input" id="addUserRateLimit" value="0" min="0" />
+        </div>
+      </div>
+      <div class="wiz-actions" style="margin-top:1rem;">
+        <button class="btn btn-ghost" onclick="closeAddUserModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitAddUser()">Create User</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ Delete Confirmation Modal ═══ -->
+  <div class="modal-overlay" id="deleteConfirmModal" style="display:none;">
+    <div class="modal-box" style="max-width:380px;text-align:center;">
+      <svg viewBox="0 0 20 20" fill="var(--danger)" style="width:40px;height:40px;margin-bottom:0.75rem;">
+        <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+      </svg>
+      <h3 style="margin-bottom:0.5rem;">Delete User?</h3>
+      <p class="text-secondary" id="deleteConfirmText">Are you sure you want to delete this user? This action cannot be undone. All their tokens will be revoked.</p>
+      <div class="wiz-actions" style="margin-top:1rem;">
+        <button class="btn btn-ghost" onclick="closeDeleteConfirm()">Cancel</button>
+        <button class="btn" style="background:var(--danger);color:#fff;" id="deleteConfirmBtn" onclick="confirmDeleteUser()">Delete</button>
       </div>
     </div>
   </div>

@@ -1893,3 +1893,304 @@ function setGuardSensitivity(level) {
         body: JSON.stringify({ sensitivity: level })
     }).catch(function () { });
 }
+
+// ─── User Management ────────────────────────────
+
+var _deleteUserID = null;
+
+function loadUserProfiles() {
+    fetch('/api/profiles')
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            if (!data.ok) return;
+            var profiles = data.profiles || [];
+            renderUserCards(profiles);
+
+            // Update summary stats.
+            var el = document.getElementById('usersTotalCount');
+            if (el) el.textContent = profiles.length;
+
+            var totalActive = 0;
+            var totalSpend = 0;
+            profiles.forEach(function (p) {
+                totalActive += (p.active_tokens || 0);
+                totalSpend += (p.estimated_usd || 0);
+            });
+
+            var elTokens = document.getElementById('usersActiveTokens');
+            if (elTokens) elTokens.textContent = totalActive;
+
+            var elSpend = document.getElementById('usersTotalSpend');
+            if (elSpend) elSpend.textContent = '$' + totalSpend.toFixed(2);
+        })
+        .catch(function () {
+            var container = document.getElementById('usersListContainer');
+            if (container) container.innerHTML = '<p class="text-secondary" style="text-align:center;padding:2rem;">Failed to load users.</p>';
+        });
+}
+
+function renderUserCards(profiles) {
+    var container = document.getElementById('usersListContainer');
+    if (!container) return;
+
+    if (!profiles || profiles.length === 0) {
+        container.innerHTML = '<div class="info-card" style="text-align:center;padding:2rem;">' +
+            '<p class="text-secondary">No users yet. Click "+ Add User" to create one.</p>' +
+            '<p class="text-secondary" style="font-size:0.75rem;margin-top:0.5rem;">Each user gets their own Shield API key and can bring their own provider.</p>' +
+            '</div>';
+        return;
+    }
+
+    var html = '';
+    profiles.forEach(function (p) {
+        var typeBadge = p.type === 'business'
+            ? '<span style="background:var(--primary);color:#fff;padding:2px 8px;border-radius:4px;font-size:0.65rem;text-transform:uppercase;">Business</span>'
+            : '<span style="background:rgba(255,255,255,0.1);color:var(--text-secondary);padding:2px 8px;border-radius:4px;font-size:0.65rem;text-transform:uppercase;">Personal</span>';
+
+        var providerLabel = p.provider || 'Not set';
+        var providerColors = {
+            'openai': '#10a37f',
+            'anthropic': '#d4a574',
+            'google': '#4285f4',
+            'mistral': '#ff7000',
+            'groq': '#f55036',
+            'local': '#888'
+        };
+        var provColor = providerColors[p.provider] || 'var(--text-secondary)';
+
+        var maskedKey = p.upstream_key || 'Not configured';
+
+        html += '<div class="info-card" style="margin-bottom:0.75rem;position:relative;">';
+        html += '<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:0.5rem;">';
+        html += '<div>';
+        html += '<div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.25rem;">';
+        html += '<strong style="font-size:1rem;">' + escapeHtml(p.name) + '</strong>';
+        html += typeBadge;
+        html += '</div>';
+        if (p.email) html += '<div class="text-secondary" style="font-size:0.75rem;">' + escapeHtml(p.email) + '</div>';
+        html += '</div>';
+        html += '<div style="display:flex;gap:0.5rem;">';
+        html += '<button class="btn btn-ghost btn-sm" onclick="promptDeleteUser(\'' + p.id + '\',\'' + escapeHtml(p.name) + '\')" style="color:var(--danger);font-size:0.7rem;">Delete</button>';
+        html += '</div>';
+        html += '</div>';
+
+        html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:0.5rem;margin-top:0.75rem;">';
+
+        // Provider
+        html += '<div style="padding:0.5rem;background:rgba(0,0,0,0.2);border-radius:6px;">';
+        html += '<div class="text-secondary" style="font-size:0.65rem;margin-bottom:0.15rem;">Provider</div>';
+        html += '<div style="font-size:0.8rem;color:' + provColor + ';">' + providerLabel.charAt(0).toUpperCase() + providerLabel.slice(1) + '</div>';
+        html += '</div>';
+
+        // API Key (masked)
+        html += '<div style="padding:0.5rem;background:rgba(0,0,0,0.2);border-radius:6px;">';
+        html += '<div class="text-secondary" style="font-size:0.65rem;margin-bottom:0.15rem;">API Key</div>';
+        html += '<div style="font-size:0.8rem;font-family:monospace;">' + maskedKey + '</div>';
+        html += '</div>';
+
+        // Active Keys
+        html += '<div style="padding:0.5rem;background:rgba(0,0,0,0.2);border-radius:6px;">';
+        html += '<div class="text-secondary" style="font-size:0.65rem;margin-bottom:0.15rem;">Shield Keys</div>';
+        html += '<div style="font-size:0.8rem;">' + (p.active_tokens || 0) + ' active / ' + (p.total_tokens || 0) + ' total</div>';
+        html += '</div>';
+
+        // Tokens Used
+        html += '<div style="padding:0.5rem;background:rgba(0,0,0,0.2);border-radius:6px;">';
+        html += '<div class="text-secondary" style="font-size:0.65rem;margin-bottom:0.15rem;">Tokens Used</div>';
+        html += '<div style="font-size:0.8rem;">' + formatNumber(p.input_tokens || 0) + ' in / ' + formatNumber(p.output_tokens || 0) + ' out</div>';
+        html += '</div>';
+
+        // Spend
+        html += '<div style="padding:0.5rem;background:rgba(0,0,0,0.2);border-radius:6px;">';
+        html += '<div class="text-secondary" style="font-size:0.65rem;margin-bottom:0.15rem;">Est. Spend</div>';
+        html += '<div style="font-size:0.8rem;">$' + (p.estimated_usd || 0).toFixed(4) + '</div>';
+        html += '</div>';
+
+        // Rate Limit
+        html += '<div style="padding:0.5rem;background:rgba(0,0,0,0.2);border-radius:6px;">';
+        html += '<div class="text-secondary" style="font-size:0.65rem;margin-bottom:0.15rem;">Rate Limit</div>';
+        html += '<div style="font-size:0.8rem;">' + (p.rate_limit > 0 ? p.rate_limit + ' req/min' : 'Unlimited') + '</div>';
+        html += '</div>';
+
+        html += '</div>';
+        html += '</div>';
+    });
+
+    container.innerHTML = html;
+}
+
+function escapeHtml(str) {
+    var div = document.createElement('div');
+    div.textContent = str || '';
+    return div.innerHTML;
+}
+
+function formatNumber(n) {
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+    if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+    return String(n);
+}
+
+// ─── Add User Modal ─────────────────────────────
+
+function openAddUserModal() {
+    document.getElementById('addUserModal').style.display = 'flex';
+    document.getElementById('addUserName').value = '';
+    document.getElementById('addUserEmail').value = '';
+    document.getElementById('addUserType').value = 'personal';
+    document.getElementById('addUserProvider').value = '';
+    document.getElementById('addUserAPIKey').value = '';
+    document.getElementById('addUserRateLimit').value = '0';
+    document.getElementById('addUserName').focus();
+}
+
+function closeAddUserModal() {
+    document.getElementById('addUserModal').style.display = 'none';
+}
+
+function submitAddUser() {
+    var name = document.getElementById('addUserName').value.trim();
+    if (!name) {
+        alert('Name is required');
+        return;
+    }
+
+    var body = {
+        name: name,
+        email: document.getElementById('addUserEmail').value.trim(),
+        type: document.getElementById('addUserType').value,
+        provider: document.getElementById('addUserProvider').value,
+        upstream_key: document.getElementById('addUserAPIKey').value.trim(),
+        rate_limit: parseInt(document.getElementById('addUserRateLimit').value) || 0
+    };
+
+    fetch('/api/profiles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+    })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            if (data.ok) {
+                closeAddUserModal();
+                loadUserProfiles();
+                if (data.token && data.token.key) {
+                    alert('User created! Their Shield API key is:\n\n' + data.token.key + '\n\nCopy this key now. It will not be shown again.');
+                }
+            } else {
+                alert('Error: ' + (data.error || 'Unknown error'));
+            }
+        })
+        .catch(function () {
+            alert('Failed to create user. Check your connection.');
+        });
+}
+
+// ─── Delete User ────────────────────────────────
+
+function promptDeleteUser(userID, userName) {
+    _deleteUserID = userID;
+    var text = document.getElementById('deleteConfirmText');
+    if (text) text.textContent = 'Are you sure you want to delete "' + userName + '"? This action cannot be undone. All their tokens will be revoked.';
+    document.getElementById('deleteConfirmModal').style.display = 'flex';
+}
+
+function closeDeleteConfirm() {
+    document.getElementById('deleteConfirmModal').style.display = 'none';
+    _deleteUserID = null;
+}
+
+function confirmDeleteUser() {
+    if (!_deleteUserID) return;
+    fetch('/api/profiles/' + _deleteUserID, { method: 'DELETE' })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            closeDeleteConfirm();
+            if (data.ok) {
+                loadUserProfiles();
+            } else {
+                alert('Error: ' + (data.error || 'Failed to delete'));
+            }
+        })
+        .catch(function () {
+            closeDeleteConfirm();
+            alert('Failed to delete user.');
+        });
+}
+
+// Auto-load profiles when switching to Users tab, backups when switching to Settings.
+var _origSwitchTab = switchTab;
+switchTab = function (tab) {
+    _origSwitchTab(tab);
+    if (tab === 'users') loadUserProfiles();
+    if (tab === 'settings') loadBackups();
+};
+
+// ─── Backup Management ──────────────────────────
+
+function createBackup() {
+    fetch('/api/backups/create', { method: 'POST' })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            if (data.ok) {
+                loadBackups();
+            } else {
+                alert('Backup failed: ' + (data.error || 'Unknown error'));
+            }
+        })
+        .catch(function () { alert('Failed to create backup.'); });
+}
+
+function loadBackups() {
+    fetch('/api/backups')
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            var container = document.getElementById('backupsList');
+            if (!container) return;
+
+            var backups = data.backups || [];
+            if (backups.length === 0) {
+                container.innerHTML = '<p class="text-secondary" style="font-size:0.75rem;">No backups yet. The first auto-backup will run in 12 hours.</p>';
+                return;
+            }
+
+            var html = '';
+            backups.forEach(function (b) {
+                var sizeKB = (b.size / 1024).toFixed(1);
+                var date = new Date(b.created_at).toLocaleString();
+                html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:0.35rem 0;border-bottom:1px solid var(--border);font-size:0.75rem;">';
+                html += '<div>';
+                html += '<span style="font-family:monospace;">' + b.name + '</span>';
+                html += '<span class="text-secondary" style="margin-left:0.5rem;">' + sizeKB + ' KB</span>';
+                html += '<span class="text-secondary" style="margin-left:0.5rem;">' + date + '</span>';
+                html += '</div>';
+                html += '<button class="btn btn-ghost btn-sm" style="font-size:0.65rem;" onclick="restoreBackup(\'' + b.path.replace(/\\/g, '\\\\') + '\')">Restore</button>';
+                html += '</div>';
+            });
+            container.innerHTML = html;
+        })
+        .catch(function () {
+            var container = document.getElementById('backupsList');
+            if (container) container.innerHTML = '<p class="text-secondary" style="font-size:0.75rem;">Failed to load backups.</p>';
+        });
+}
+
+function restoreBackup(path) {
+    if (!confirm('Are you sure you want to restore this backup? This will replace all current data.')) return;
+
+    fetch('/api/backups/restore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: path })
+    })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            if (data.ok) {
+                alert('Backup restored successfully. Refreshing...');
+                window.location.reload();
+            } else {
+                alert('Restore failed: ' + (data.error || 'Unknown error'));
+            }
+        })
+        .catch(function () { alert('Failed to restore backup.'); });
+}
