@@ -1726,16 +1726,7 @@ function initSidebarResize() {
     if (savedW) sidebar.style.width = savedW;
 }
 
-// ─── Mobile Drawer ───────────────────────────
 
-function toggleMobileDrawer() {
-    var sidebar = document.getElementById('sidebar');
-    var backdrop = document.getElementById('sidebarBackdrop');
-    if (!sidebar) return;
-
-    var isOpen = sidebar.classList.toggle('mobile-open');
-    if (backdrop) backdrop.classList.toggle('visible', isOpen);
-}
 
 // ─── PWA Install ─────────────────────────────
 
