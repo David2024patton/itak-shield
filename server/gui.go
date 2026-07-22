@@ -1010,6 +1010,8 @@ func (g *GUIServer) handlePortCheck(w http.ResponseWriter, r *http.Request) {
 // handleInstall installs or removes the auto-start service.
 // POST /api/install with {"action":"install"} or {"action":"uninstall"}.
 // On Windows, install triggers a UAC prompt if not admin.
+// This handler is synchronous — it waits for the install to complete
+// (including UAC) so the response reflects the actual outcome.
 func (g *GUIServer) handleInstall(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1025,16 +1027,13 @@ func (g *GUIServer) handleInstall(w http.ResponseWriter, r *http.Request) {
 
 	switch req.Action {
 	case "install":
-		// Run in a goroutine — on Windows this may trigger a UAC prompt
-		// and relaunch a new elevated process. We return immediately.
-		go func() {
-			if err := svc.Install("", nil); err != nil {
-				log.Printf("[iTaK Shield] Auto-start install error: %v", err)
-			}
-		}()
+		if err := svc.Install("", nil); err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+			return
+		}
 		writeJSON(w, map[string]interface{}{
 			"ok":      true,
-			"message": "Installing auto-start. If you see a UAC prompt, click Yes to allow.",
+			"message": "Auto-start installed. Shield will start on boot.",
 		})
 
 	case "uninstall":

@@ -68,84 +68,114 @@ const serviceDescription = "AI privacy proxy that scans for PII, blocks prompt i
 
 // ─── Windows ────────────────────────────────────
 
-// isAdminWindows reports whether the current process has admin privileges.
-func isAdminWindows() bool {
-	cmd := exec.Command("net", "session")
-	err := cmd.Run()
-	return err == nil
-}
-
-// installWindows creates a Windows Service via sc.exe. Requires admin
-// privileges — if not elevated, auto-relaunches with a UAC prompt.
+// installWindows tries to create a Windows Service via sc.exe. If the
+// current process isn't admin, it writes the sc.exe commands to a temp
+// .bat file and launches it with a UAC prompt (PowerShell -Verb RunAs),
+// then waits for it to finish. If the user declines UAC or it fails, it
+// falls back to the Startup-folder approach (no admin needed).
 func installWindows(exePath string, args []string) error {
-	if !isAdminWindows() {
-		fmt.Println("[iTaK Shield] Admin privileges required. Requesting elevation...")
-		return relaunchElevated()
-	}
-
 	binPath := exePath
 	if len(args) > 0 {
 		binPath = exePath + " " + strings.Join(args, " ")
 	}
 
+	// Try sc.exe directly. If we're admin this works; if not, it fails
+	// with "access denied" and we escalate.
 	cmd := exec.Command("sc.exe", "create", serviceName,
 		"binPath=", binPath,
 		"DisplayName=", serviceDisplayName,
 		"start=", "auto",
 		"obj=", "LocalSystem",
 	)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		// If sc.exe fails (e.g. service already exists), fall back to
-		// the Startup-folder approach which doesn't need admin.
-		fmt.Printf("[iTaK Shield] Service install failed (%s), using Startup folder instead.\n", string(output))
-		return installStartupFolder(exePath, args)
+	_, err := cmd.CombinedOutput()
+	if err == nil {
+		// Success — we're admin. Set description + recovery + start.
+		exec.Command("sc.exe", "description", serviceName, serviceDescription).CombinedOutput()
+		exec.Command("sc.exe", "failure", serviceName,
+			"reset=", "86400",
+			"actions=", "restart/60000/restart/60000/restart/60000",
+		).CombinedOutput()
+		exec.Command("sc.exe", "start", serviceName).CombinedOutput()
+		fmt.Println("[iTaK Shield] Windows service installed and started.")
+		return nil
 	}
 
-	// Set description.
-	descCmd := exec.Command("sc.exe", "description", serviceName, serviceDescription)
-	descCmd.CombinedOutput()
+	// Not admin — try elevation via a temp .bat + UAC prompt.
+	fmt.Println("[iTaK Shield] Requesting admin privileges (UAC prompt)...")
+	if tryElevatedSC(exePath, binPath) {
+		fmt.Println("[iTaK Shield] Windows service installed via UAC elevation.")
+		return nil
+	}
 
-	// Set recovery: restart on failure.
-	recoverCmd := exec.Command("sc.exe", "failure", serviceName,
-		"reset=", "86400",
-		"actions=", "restart/60000/restart/60000/restart/60000",
-	)
-	recoverCmd.CombinedOutput()
-
-	// Start the service now.
-	exec.Command("sc.exe", "start", serviceName).CombinedOutput()
-
-	fmt.Println("[iTaK Shield] Windows service installed and started. It will auto-start on boot.")
-	return nil
+	// User declined UAC or it failed — fall back to Startup folder (no admin).
+	fmt.Println("[iTaK Shield] Using Startup folder (no admin needed).")
+	return installStartupFolder(exePath, args)
 }
 
-// relaunchElevated re-launches the current process with a UAC prompt
-// (ShellExecute "runas" verb). The elevated process will retry the install.
-func relaunchElevated() error {
-	exe, _ := os.Executable()
-	cwd, _ := os.Getwd()
+// tryElevatedSC writes the sc.exe commands to a temp .bat file and launches
+// it elevated via PowerShell Start-Process -Verb RunAs (UAC prompt). Returns
+// true if the service was created successfully.
+func tryElevatedSC(exePath, binPath string) bool {
+	// Write a temp batch file with all the sc.exe commands.
+	tmpDir := os.Getenv("TEMP")
+	if tmpDir == "" {
+		tmpDir = "."
+	}
+	batPath := filepath.Join(tmpDir, "itak-shield-install.bat")
+	resultPath := filepath.Join(tmpDir, "itak-shield-install-result.txt")
 
-	// Use PowerShell Start-Process -Verb RunAs for a clean UAC prompt.
-	psCmd := fmt.Sprintf("Start-Process -FilePath '%s' -ArgumentList 'install' -WorkingDirectory '%s' -Wait", exe, cwd)
-	cmd := exec.Command("powershell", "-Command", psCmd)
+	// Clean up any previous result file.
+	os.Remove(resultPath)
+
+	bat := fmt.Sprintf(`@echo off
+sc.exe create %s binPath= "%s" DisplayName= "%s" start= auto obj= LocalSystem
+if %%errorlevel%% neq 0 (
+  echo FAILED > "%s"
+  exit /b 1
+)
+sc.exe description %s "%s"
+sc.exe failure %s reset= 86400 actions= restart/60000/restart/60000/restart/60000
+sc.exe start %s
+echo OK > "%s"
+`,
+		serviceName, binPath, serviceDisplayName,
+		resultPath,
+		serviceName, serviceDescription,
+		serviceName,
+		serviceName,
+		resultPath,
+	)
+
+	if err := os.WriteFile(batPath, []byte(bat), 0644); err != nil {
+		return false
+	}
+	defer os.Remove(batPath)
+
+	// Launch the bat elevated and wait for it.
+	psCmd := fmt.Sprintf("Start-Process -FilePath '%s' -Verb RunAs -Wait", batPath)
+	cmd := exec.Command("powershell", "-NoProfile", "-Command", psCmd)
 	err := cmd.Run()
 	if err != nil {
-		return fmt.Errorf("elevation failed: %w (run 'itak-shield install' from an admin terminal)", err)
+		return false
 	}
-	os.Exit(0)
-	return nil
+
+	// Check the result file.
+	data, err := os.ReadFile(resultPath)
+	if err != nil {
+		return false
+	}
+	os.Remove(resultPath)
+	return strings.TrimSpace(string(data)) == "OK"
 }
 
-// installStartupFolder creates a shortcut in the Windows Startup folder so
-// Shield launches when the user logs in. Does NOT require admin privileges.
+// installStartupFolder creates a VBS launcher in the Windows Startup folder
+// so Shield launches when the user logs in. Does NOT require admin privileges.
 func installStartupFolder(exePath string, args []string) error {
 	startupDir := getStartupFolderPath()
 	if err := os.MkdirAll(startupDir, 0755); err != nil {
 		return fmt.Errorf("cannot access Startup folder: %w", err)
 	}
 
-	// Create a VBS launcher that runs Shield hidden (no console window).
 	vbsPath := filepath.Join(startupDir, "itak-shield.vbs")
 	argsStr := ""
 	for _, a := range args {
@@ -160,7 +190,6 @@ WshShell.Run """%s""%s""", 0, False
 	}
 
 	fmt.Println("[iTaK Shield] Auto-start installed via Startup folder: " + vbsPath)
-	fmt.Println("[iTaK Shield] Shield will start automatically when you log in.")
 	return nil
 }
 
@@ -175,15 +204,13 @@ func getStartupFolderPath() string {
 }
 
 func uninstallWindows() error {
-	// Try service uninstall first (needs admin).
-	if isAdminWindows() {
-		stopCmd := exec.Command("sc.exe", "stop", serviceName)
-		stopCmd.CombinedOutput()
-		cmd := exec.Command("sc.exe", "delete", serviceName)
-		cmd.CombinedOutput()
-	}
+	// Try service uninstall (needs admin, but best-effort).
+	stopCmd := exec.Command("sc.exe", "stop", serviceName)
+	stopCmd.CombinedOutput()
+	cmd := exec.Command("sc.exe", "delete", serviceName)
+	cmd.CombinedOutput()
 
-	// Also remove Startup folder launcher (no admin needed).
+	// Remove Startup folder launcher (no admin needed).
 	vbsPath := filepath.Join(getStartupFolderPath(), "itak-shield.vbs")
 	os.Remove(vbsPath)
 
