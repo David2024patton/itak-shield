@@ -115,6 +115,11 @@ func (s *Scanner) add(piiType PIIType, pattern string) {
 // Scan finds all PII matches in the given text.
 // Returns matches sorted by position (earliest first).
 func (s *Scanner) Scan(text string) []Match {
+	// Mask out base64 data URLs (image/audio/attachment payloads) so multimodal
+	// requests with inline images are not false-flagged as base64 secrets. We
+	// record the masked spans and skip any match that falls inside one.
+	masked := maskDataURLs(text)
+
 	var matches []Match
 	seen := make(map[string]bool) // deduplicate overlapping matches
 
@@ -125,6 +130,10 @@ func (s *Scanner) Scan(text string) []Match {
 		}
 		locs := p.Re.FindAllStringIndex(text, -1)
 		for _, loc := range locs {
+			// Skip matches that fall inside a masked data-URL span.
+			if inMaskedSpan(masked, loc[0], loc[1]) {
+				continue
+			}
 			value := text[loc[0]:loc[1]]
 			key := value + string(rune(loc[0])) // unique by value+position
 			if seen[key] {
@@ -160,4 +169,32 @@ func (s *Scanner) Scan(text string) []Match {
 	}
 
 	return filtered
+}
+
+// dataURLRe matches base64 data URLs used for inline images/audio/etc in
+// OpenAI-compatible multimodal payloads. Example:
+//   "data:image/png;base64,iVBORw0KGgo..."
+// Note: no \s in the char class — base64 data URLs are a single token; allowing
+// whitespace would make it greedy enough to swallow surrounding text.
+var dataURLRe = regexp.MustCompile(`data:[a-zA-Z0-9.+-]+/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+`)
+
+// maskDataURLs returns a list of [start,end] spans covering data-URL payloads.
+// Matches inside these spans are ignored by Scan to avoid false positives.
+func maskDataURLs(text string) [][2]int {
+	var spans [][2]int
+	locs := dataURLRe.FindAllStringIndex(text, -1)
+	for _, loc := range locs {
+		spans = append(spans, [2]int{loc[0], loc[1]})
+	}
+	return spans
+}
+
+// inMaskedSpan reports whether [start,end) overlaps any masked span.
+func inMaskedSpan(spans [][2]int, start, end int) bool {
+	for _, sp := range spans {
+		if start < sp[1] && end > sp[0] {
+			return true
+		}
+	}
+	return false
 }

@@ -79,20 +79,41 @@ type DLPConfig struct {
 	Policies map[string]string `yaml:"policies"` // PIIType -> "redact" or "block"
 }
 
+// Provider defines a single upstream LLM provider the gateway can route to.
+type Provider struct {
+	ID      string   `yaml:"id"`                // short identifier, e.g. "qwen"
+	Name    string   `yaml:"name"`              // human label, e.g. "Qwen Cloud"
+	API     string   `yaml:"api"`               // base URL, e.g. "https://.../v1"
+	Key     string   `yaml:"key"`               // upstream API key (env override via ${VAR})
+	Models  []string `yaml:"models"`            // model IDs exposed at this provider
+	SkipPII bool     `yaml:"skip_pii"`          // do not redact before forwarding (local/etc)
+	NoAuth  bool     `yaml:"no_auth"`           // strip Authorization header (Ollama etc)
+}
+
+// GatewayConfig turns Shield into a multi-provider OpenAI-compatible gateway.
+// When Providers is non-empty, the single Target field is ignored for
+// chat/completions and embeddings; requests are routed by the "model" field.
+// The /v1/models endpoint aggregates models from every provider.
+type GatewayConfig struct {
+	Enabled   bool       `yaml:"enabled"`
+	Providers []Provider `yaml:"providers"`
+}
+
 // Config is the top-level configuration for iTaK Shield.
 // All fields are optional with sensible defaults.
 type Config struct {
-	Listen  string       `yaml:"listen"`
-	Target  string       `yaml:"target"`
-	Verbose bool         `yaml:"verbose"`
-	Audit   AuditConfig  `yaml:"audit"`
-	Rules   RulesConfig  `yaml:"rules"`
-	Health  HealthConfig `yaml:"health"`
-	Auth    AuthConfig   `yaml:"auth"`
-	Cache   CacheConfig  `yaml:"cache"`
-	Retry   RetryConfig  `yaml:"retry"`
-	Spend   SpendConfig  `yaml:"spend"`
-	DLP     DLPConfig    `yaml:"dlp"`
+	Listen   string        `yaml:"listen"`
+	Target   string        `yaml:"target"`
+	Verbose  bool          `yaml:"verbose"`
+	Audit    AuditConfig   `yaml:"audit"`
+	Rules    RulesConfig   `yaml:"rules"`
+	Health   HealthConfig  `yaml:"health"`
+	Auth     AuthConfig    `yaml:"auth"`
+	Cache    CacheConfig   `yaml:"cache"`
+	Retry    RetryConfig   `yaml:"retry"`
+	Spend    SpendConfig   `yaml:"spend"`
+	DLP      DLPConfig     `yaml:"dlp"`
+	Gateway  GatewayConfig `yaml:"gateway"`
 }
 
 // Defaults returns a Config with sensible defaults for personal use.

@@ -17,6 +17,7 @@ import (
 	"github.com/David2024patton/itak-shield/audit"
 	"github.com/David2024patton/itak-shield/auth"
 	"github.com/David2024patton/itak-shield/cache"
+	"github.com/David2024patton/itak-shield/config"
 	"github.com/David2024patton/itak-shield/dlp"
 	"github.com/David2024patton/itak-shield/retry"
 	"github.com/David2024patton/itak-shield/scanner"
@@ -117,6 +118,70 @@ func WithDLP(policy *dlp.Policy) Option {
 	}
 }
 
+// WithGateway enables multi-provider routing. When set, the proxy parses the
+// "model" field from OpenAI-compatible request bodies and routes to the
+// matching upstream provider. The /v1/models endpoint aggregates all models.
+func WithGateway(providers []config.Provider) Option {
+	return func(s *Server) error {
+		gw := &Gateway{
+			providers: make(map[string]*ProviderTarget, len(providers)),
+			modelIdx:  make(map[string]*ProviderTarget),
+		}
+		for i := range providers {
+			p := &providers[i]
+			u, err := url.Parse(p.API)
+			if err != nil {
+				return fmt.Errorf("gateway: invalid api URL for provider %q: %w", p.ID, err)
+			}
+			pt := &ProviderTarget{Provider: p, Base: u}
+			gw.providers[p.ID] = pt
+			for _, m := range p.Models {
+				gw.modelIdx[m] = pt
+			}
+		}
+		s.gateway = gw
+		return nil
+	}
+}
+
+// ProviderTarget is a resolved upstream provider with its parsed base URL.
+type ProviderTarget struct {
+	Provider *config.Provider
+	Base     *url.URL
+}
+
+// Gateway holds the multi-provider routing state.
+type Gateway struct {
+	mu        sync.RWMutex
+	providers map[string]*ProviderTarget
+	modelIdx  map[string]*ProviderTarget // model ID -> provider
+}
+
+// Resolve finds the upstream provider for a given model ID.
+func (g *Gateway) Resolve(model string) (*ProviderTarget, bool) {
+	if g == nil {
+		return nil, false
+	}
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	pt, ok := g.modelIdx[model]
+	return pt, ok
+}
+
+// Models returns all model IDs across providers, deduped, for /v1/models.
+func (g *Gateway) Models() []config.Provider {
+	if g == nil {
+		return nil
+	}
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	out := make([]config.Provider, 0, len(g.providers))
+	for _, pt := range g.providers {
+		out = append(out, *pt.Provider)
+	}
+	return out
+}
+
 // Server is the iTaK Shield privacy-aware reverse proxy.
 type Server struct {
 	target    *url.URL
@@ -139,6 +204,7 @@ type Server struct {
 	retryCfg     *retry.Config
 	spendTracker *spend.Tracker
 	dlpPolicy    *dlp.Policy
+	gateway      *Gateway
 
 	// Per-user request tracking for analytics.
 	userStatsMu sync.Mutex
@@ -252,6 +318,12 @@ func (s *Server) trackUser(user string) {
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.requestCount.Add(1)
 
+	// ── Gateway: /v1/models aggregation endpoint ──────
+	if s.gateway != nil && (r.URL.Path == "/v1/models" || r.URL.Path == "/models") && r.Method == http.MethodGet {
+		s.handleModelsList(w, r)
+		return
+	}
+
 	// ── Step 1: Authentication ────────────────
 	user := "anonymous"
 	if s.authManager != nil && s.authManager.HasKeys() {
@@ -307,10 +379,38 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// ── Step 2b: Gateway model routing ─────────
+	targetURL := s.target
+	var providerKey string
+	var skipPII, noAuth bool
+	if s.gateway != nil && len(bodyBytes) > 0 {
+		var peek struct {
+			Model string `json:"model"`
+		}
+		if json.Unmarshal(bodyBytes, &peek) == nil && peek.Model != "" {
+			if pt, ok := s.gateway.Resolve(peek.Model); ok {
+				targetURL = pt.Base
+				providerKey = pt.Provider.Key
+				skipPII = pt.Provider.SkipPII
+				noAuth = pt.Provider.NoAuth
+				s.addLog("ROUTE", fmt.Sprintf("model=%s -> provider=%s", peek.Model, pt.Provider.ID))
+			} else {
+				s.addLog("ROUTE", fmt.Sprintf("model=%s not found in any provider", peek.Model))
+				writeJSONError(w, http.StatusNotFound, fmt.Sprintf(
+					"model %q is not configured in the iTaK Shield gateway. Available providers: %s",
+					peek.Model, s.gatewayProviderIDs()))
+				return
+			}
+		}
+	}
+
 	// ── Step 3: Scan for PII ─────────────────
 	s.tokenizer.Reset()
 	bodyStr := string(bodyBytes)
-	matches := s.scanner.Scan(bodyStr)
+	var matches []scanner.Match
+	if !skipPII {
+		matches = s.scanner.Scan(bodyStr)
+	}
 
 	// ── Step 3b: DLP policy check ────────────
 	if s.dlpPolicy != nil && len(matches) > 0 {
@@ -352,7 +452,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ── Step 5: PII redaction ────────────────
-	redacted, count := s.tokenizer.Redact(bodyStr, matches)
+	var redacted string
+	var count int
+	if skipPII {
+		redacted = bodyStr
+	} else {
+		redacted, count = s.tokenizer.Redact(bodyStr, matches)
+	}
 
 	if count > 0 {
 		s.redactedCount.Add(int64(count))
@@ -396,7 +502,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ── Step 6: Build and forward request ────
-	upstreamURL := *s.target
+	if targetURL == nil {
+		http.Error(w, "no upstream target configured", http.StatusInternalServerError)
+		return
+	}
+	upstreamURL := *targetURL
 	upstreamURL.Path = r.URL.Path
 	upstreamURL.RawQuery = r.URL.RawQuery
 
@@ -407,17 +517,29 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Copy headers (except Host).
+	// Copy headers (except Host and Authorization when gateway overrides).
 	for key, values := range r.Header {
 		if strings.EqualFold(key, "Host") {
+			continue
+		}
+		if strings.EqualFold(key, "Authorization") && providerKey != "" {
 			continue
 		}
 		for _, v := range values {
 			upReq.Header.Add(key, v)
 		}
 	}
-	upReq.Header.Set("Host", s.target.Host)
+	upReq.Header.Set("Host", targetURL.Host)
 	upReq.ContentLength = int64(len(redactedBytes))
+
+	// Gateway: inject the provider's upstream key (or strip auth for Ollama etc).
+	if providerKey != "" {
+		if noAuth {
+			upReq.Header.Del("Authorization")
+		} else {
+			upReq.Header.Set("Authorization", "Bearer "+providerKey)
+		}
+	}
 
 	// Forward with retry/fallback or direct.
 	client := &http.Client{}
@@ -441,6 +563,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
+
+	// ── Step 6b: SSE streaming pass-through ──────
+	// If the upstream is streaming (text/event-stream), pipe it through
+	// chunk-by-chunk, restoring PII tokens in each delta. This keeps the
+	// live token stream visible to opencode.
+	if strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") || strings.Contains(resp.Header.Get("Content-Type"), "application/x-ndjson") {
+		s.handleSSEResponse(w, resp, count)
+		return
+	}
 
 	// Read the response body, handling gzip if needed.
 	var respBody []byte
@@ -516,6 +647,106 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(restored))
 }
 
+// handleModelsList serves the OpenAI-compatible /v1/models endpoint, aggregating
+// models from every configured gateway provider so opencode sees one list.
+func (s *Server) handleModelsList(w http.ResponseWriter, r *http.Request) {
+	providers := s.gateway.Models()
+	type modelObj struct {
+		ID      string `json:"id"`
+		Object  string `json:"object"`
+		OwnedBy string `json:"owned_by"`
+	}
+	type listResp struct {
+		Object string     `json:"object"`
+		Data   []modelObj `json:"data"`
+	}
+	out := listResp{Object: "list"}
+	for _, p := range providers {
+		for _, m := range p.Models {
+			out.Data = append(out.Data, modelObj{
+				ID:      m,
+				Object:  "model",
+				OwnedBy: p.ID,
+			})
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
+}
+
+// handleSSEResponse pipes a streaming response through to the client, restoring
+// PII tokens in each chunk. Used for /v1/chat/completions with stream:true.
+func (s *Server) handleSSEResponse(w http.ResponseWriter, resp *http.Response, piiCount int) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		// Fallback: buffer and send at once.
+		body, _ := io.ReadAll(resp.Body)
+		restored := s.tokenizer.Restore(string(body))
+		for key, values := range resp.Header {
+			lower := strings.ToLower(key)
+			if lower == "content-length" || lower == "content-encoding" || lower == "transfer-encoding" {
+				continue
+			}
+			for _, v := range values {
+				w.Header().Add(key, v)
+			}
+		}
+		w.WriteHeader(resp.StatusCode)
+		w.Write([]byte(restored))
+		return
+	}
+
+	// Copy headers (except hop-by-hop and content-length which is invalid for chunked).
+	for key, values := range resp.Header {
+		lower := strings.ToLower(key)
+		if lower == "content-length" || lower == "content-encoding" || lower == "transfer-encoding" {
+			continue
+		}
+		for _, v := range values {
+			w.Header().Add(key, v)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+
+	// Pipe line-by-line, restoring PII in data: lines.
+	scanner := newLineScanner(resp.Body)
+	for {
+		line, done := scanner.ReadLine()
+		if len(line) > 0 {
+			restored := line
+			if piiCount > 0 && strings.HasPrefix(string(line), "data:") {
+				restored = []byte("data: " + s.tokenizer.Restore(strings.TrimPrefix(string(line), "data: ")))
+			}
+			w.Write(restored)
+			w.Write([]byte("\n"))
+			if ok {
+				flusher.Flush()
+			}
+		}
+		if done {
+			break
+		}
+	}
+	if piiCount > 0 {
+		s.addLog("RESTORE", fmt.Sprintf("Streamed response with %d PII token(s) restored", piiCount))
+	} else {
+		s.addLog("PASS", "Streamed SSE response")
+	}
+}
+
+// gatewayProviderIDs returns a comma-separated list of provider IDs for error messages.
+func (s *Server) gatewayProviderIDs() string {
+	if s.gateway == nil {
+		return ""
+	}
+	providers := s.gateway.Models()
+	ids := make([]string, 0, len(providers))
+	for _, p := range providers {
+		ids = append(ids, p.ID)
+	}
+	return strings.Join(ids, ", ")
+}
+
 // writeJSONError writes a JSON error response matching OpenAI error format.
 func writeJSONError(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
@@ -527,4 +758,51 @@ func writeJSONError(w http.ResponseWriter, status int, msg string) {
 			"code":    status,
 		},
 	})
+}
+
+// lineScanner reads newline-delimited lines from a reader (for SSE streaming).
+type lineScanner struct {
+	r   io.Reader
+	buf []byte
+	eof bool
+}
+
+func newLineScanner(r io.Reader) *lineScanner {
+	return &lineScanner{r: r, buf: make([]byte, 0, 4096)}
+}
+
+// ReadLine returns the next line (without trailing newline) and whether the
+// stream is exhausted. A zero-length line with done=true means EOF.
+func (ls *lineScanner) ReadLine() (line []byte, done bool) {
+	if ls.eof && len(ls.buf) == 0 {
+		return nil, true
+	}
+	tmp := make([]byte, 4096)
+	for {
+		// Look for a newline in the buffer.
+		for i := 0; i < len(ls.buf); i++ {
+			if ls.buf[i] == '\n' {
+				line = ls.buf[:i]
+				// Strip a trailing \r if present.
+				if len(line) > 0 && line[len(line)-1] == '\r' {
+					line = line[:len(line)-1]
+				}
+				ls.buf = ls.buf[i+1:]
+				return line, false
+			}
+		}
+		if ls.eof {
+			// No more newlines; return whatever remains.
+			line = ls.buf
+			ls.buf = nil
+			return line, true
+		}
+		n, err := ls.r.Read(tmp)
+		if n > 0 {
+			ls.buf = append(ls.buf, tmp[:n]...)
+		}
+		if err != nil {
+			ls.eof = true
+		}
+	}
 }

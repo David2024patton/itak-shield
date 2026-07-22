@@ -190,3 +190,40 @@ func TestDisableRule(t *testing.T) {
 	}
 	t.Logf("Disable rule: PASSED")
 }
+
+func TestScanSkipsBase64DataURLs(t *testing.T) {
+	s := New()
+	// A multimodal payload with an inline base64 image. The long base64 string
+	// must NOT be flagged as a SECRET, but the email next to it still should.
+	img := "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGQAAABkCAYAAABw4pVUAAAAAXNSR0IArs4cNAAAALxJREFUeF7twTEBAAAAwqD1T20JT6AAAOA+ek1kAQ0kAaSAJLABJIAEEkGCCDBBBpggA0yQAaZIgzQkAQ0kAaSAJLABJIAEEkGCCDBBBpggA0yQAaZIgzQkAQ0kAaSAJLABJIAEEkGCCDBBBpggA0yQAaZIgzQkAQ0kAaSAJLABJIAEEkGCCDBBBpggA0yQAaZIgzQkAQ0kAaSAJLABJIAEEkGCCDBBBpggA0yQAaZIgzQkAQ0kAaSAJLABJIAEEkGCCDBBBpggA0yQAaZI=="
+	text := "Describe this image: " + img + " and email me at john@acme.com"
+
+	matches := s.Scan(text)
+
+	// Must NOT flag the base64 image as a SECRET.
+	for _, m := range matches {
+		if m.Type == PIISecret {
+			t.Errorf("base64 image data URL was wrongly flagged as SECRET: %q...", m.Value[:min(40, len(m.Value))])
+		}
+	}
+
+	// MUST still detect the email.
+	emailFound := false
+	for _, m := range matches {
+		if m.Type == PIIEmail && m.Value == "john@acme.com" {
+			emailFound = true
+			break
+		}
+	}
+	if !emailFound {
+		t.Error("expected EMAIL to still be detected alongside a data URL")
+	}
+	t.Logf("Data URL masking: PASSED (email still detected, image not flagged)")
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}

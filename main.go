@@ -176,7 +176,23 @@ func buildProxyOptions(cfg *config.Config) ([]proxy.Option, *audit.Logger) {
 		}
 	}
 
+	// Multi-provider gateway.
+	if cfg.Gateway.Enabled && len(cfg.Gateway.Providers) > 0 {
+		opts = append(opts, proxy.WithGateway(cfg.Gateway.Providers))
+		log.Printf("[iTaK Shield] Gateway enabled: %d providers, %d total models",
+			len(cfg.Gateway.Providers), countGatewayModels(cfg.Gateway.Providers))
+	}
+
 	return opts, auditLogger
+}
+
+// countGatewayModels returns the total number of models across all providers.
+func countGatewayModels(providers []config.Provider) int {
+	n := 0
+	for _, p := range providers {
+		n += len(p.Models)
+	}
+	return n
 }
 
 // runCLI starts the proxy in headless CLI mode.
