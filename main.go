@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -23,7 +24,7 @@ import (
 	"github.com/David2024patton/itak-shield/spend"
 )
 
-var version = "0.3.0"
+var version = "0.4.0"
 
 //go:embed web/*
 var webFS embed.FS
@@ -198,7 +199,7 @@ func countGatewayModels(providers []config.Provider) int {
 // runCLI starts the proxy in headless CLI mode.
 func runCLI(cfg *config.Config, port int) {
 	if port == 0 {
-		port = 10000 + rand.Intn(55535)
+		port = pickAvailablePort(cfg.Listen)
 	}
 
 	opts, auditLogger := buildProxyOptions(cfg)
@@ -261,7 +262,7 @@ func runCLI(cfg *config.Config, port int) {
 // runGUI starts the interactive web GUI.
 func runGUI(guiPort int, bindAddr string) {
 	if guiPort == 0 {
-		guiPort = 10000 + rand.Intn(55535)
+		guiPort = pickAvailablePort(bindAddr)
 	}
 	if bindAddr == "" {
 		bindAddr = "127.0.0.1"
@@ -313,4 +314,49 @@ func openBrowser(url string) {
 		cmd = exec.Command("xdg-open", url)
 	}
 	_ = cmd.Start()
+}
+
+// uncommonPorts is a curated list of 5-digit ports that are rarely used by
+// other applications, reducing the chance of collision on first try.
+var uncommonPorts = []int{
+	20979, 23871, 27419, 31567, 34289, 38941, 41357, 45673, 48901, 52437,
+	26783, 29153, 33509, 36847, 39211, 42793, 46189, 50329, 54781, 58413,
+	21937, 25693, 31847, 37291, 41563, 44927, 49153, 53617, 57389, 61243,
+	24657, 31297, 38471, 42937, 46589, 51743, 55807, 59651, 63187, 64859,
+}
+
+// pickAvailablePort returns a random uncommon 5-digit port that is verified
+// available (not in use) on the given bind address. Tries the curated list
+// first, then falls back to random ports in the 10000-65535 range. Returns 0
+// if no port could be bound after 20 attempts.
+func pickAvailablePort(bindAddr string) int {
+	if bindAddr == "" {
+		bindAddr = "127.0.0.1"
+	}
+	// Shuffle the curated list so each install gets a different port.
+	indices := rand.Perm(len(uncommonPorts))
+	for _, idx := range indices {
+		port := uncommonPorts[idx]
+		if isPortAvailable(bindAddr, port) {
+			return port
+		}
+	}
+	// Fall back to random ports.
+	for i := 0; i < 20; i++ {
+		port := 10000 + rand.Intn(55535)
+		if isPortAvailable(bindAddr, port) {
+			return port
+		}
+	}
+	return 0
+}
+
+// isPortAvailable reports whether a TCP port can be bound on the given address.
+func isPortAvailable(bindAddr string, port int) bool {
+	ln, err := net.Listen("tcp", fmt.Sprintf("%s:%d", bindAddr, port))
+	if err != nil {
+		return false
+	}
+	ln.Close()
+	return true
 }

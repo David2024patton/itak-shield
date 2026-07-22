@@ -857,6 +857,57 @@ function getTargetUrl() {
 
 // ─── Start Proxy ─────────────────────────────
 
+// ─── Port Availability Check ─────────────────
+
+function checkPortAvailability() {
+    var port = parseInt(document.getElementById('proxyPort').value);
+    var statusEl = document.getElementById('portStatus');
+    if (!port || port < 1024 || port > 65535) {
+        if (statusEl) {
+            statusEl.style.display = '';
+            statusEl.style.color = 'var(--warning)';
+            statusEl.textContent = 'Port must be between 1024 and 65535.';
+        }
+        return;
+    }
+    if (statusEl) {
+        statusEl.style.display = '';
+        statusEl.style.color = 'var(--text-muted)';
+        statusEl.textContent = 'Checking port ' + port + '...';
+    }
+    fetch('/api/port/check?port=' + port)
+        .then(function (resp) { return resp.json(); })
+        .then(function (data) {
+            if (!statusEl) return;
+            statusEl.style.display = '';
+            if (data.ok) {
+                statusEl.style.color = 'var(--success)';
+                statusEl.textContent = 'Port ' + port + ' is available.';
+            } else {
+                statusEl.style.color = 'var(--danger)';
+                statusEl.textContent = 'Port ' + port + ' is in use. Click to randomize: ';
+                var link = document.createElement('a');
+                link.href = '#';
+                link.textContent = 'pick another';
+                link.style.color = 'var(--accent)';
+                link.onclick = function (e) {
+                    e.preventDefault();
+                    defaultRandomPort = Math.floor(Math.random() * (65535 - 10000 + 1)) + 10000;
+                    document.getElementById('proxyPort').value = defaultRandomPort;
+                    checkPortAvailability();
+                };
+                statusEl.appendChild(link);
+            }
+        })
+        .catch(function () {
+            if (statusEl) {
+                statusEl.style.display = '';
+                statusEl.style.color = 'var(--text-muted)';
+                statusEl.textContent = '';
+            }
+        });
+}
+
 function startProxy() {
     var btn = document.getElementById('startBtn');
     btn.disabled = true;
@@ -888,7 +939,16 @@ function startProxy() {
                 showDashboard(port, targetUrl);
                 startPolling();
             } else {
-                alert('Failed to start: ' + (data.error || 'Unknown error'));
+                var errMsg = data.error || 'Unknown error';
+                // If port is in use, offer to randomize.
+                if (errMsg.indexOf('already in use') >= 0) {
+                    defaultRandomPort = Math.floor(Math.random() * (65535 - 10000 + 1)) + 10000;
+                    alert('Port ' + port + ' is in use. A new random port (' + defaultRandomPort + ') has been selected. Click Start again.');
+                    document.getElementById('proxyPort').value = defaultRandomPort;
+                    checkPortAvailability();
+                } else {
+                    alert('Failed to start: ' + errMsg);
+                }
                 btn.disabled = false;
                 btn.textContent = 'Start iTaK Shield';
             }
@@ -1747,12 +1807,42 @@ function pwaDismiss() {
 
 // ─── Init ────────────────────────────────────
 
+// ─── Theme Toggle (light/dark) ───────────────
+
+function initThemeToggle() {
+    var theme = localStorage.getItem('itak_theme') || 'dark';
+    applyTheme(theme);
+}
+
+function toggleTheme() {
+    var current = document.documentElement.getAttribute('data-theme') || 'dark';
+    var next = current === 'dark' ? 'light' : 'dark';
+    applyTheme(next);
+    localStorage.setItem('itak_theme', next);
+}
+
+function applyTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+    var moon = document.getElementById('themeIconMoon');
+    var sun = document.getElementById('themeIconSun');
+    if (moon && sun) {
+        moon.style.display = theme === 'dark' ? '' : 'none';
+        sun.style.display = theme === 'dark' ? 'none' : '';
+    }
+    // Update the <meta name="theme-color"> for mobile browser chrome.
+    var meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) {
+        meta.setAttribute('content', theme === 'dark' ? '#0d1117' : '#ffffff');
+    }
+}
+
 document.addEventListener('DOMContentLoaded', function () {
     buildProviderGrid();
     document.getElementById('proxyPort').value = defaultRandomPort;
     checkInitialStatus();
     initHelpIcons();
     initSidebarResize();
+    initThemeToggle();
 
     // Restore sidebar collapsed state
     if (localStorage.getItem('itak_sidebar') === 'collapsed') {

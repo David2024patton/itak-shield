@@ -43,6 +43,34 @@
   --top-bar-height: 52px;
 }
 
+/* ─── Light Theme ───────────────────────────────
+   Activated via [data-theme="light"] on <html>.
+   Overrides only the color variables; all components
+   use var(--...) so they adapt automatically. ──── */
+:root[data-theme="light"] {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f6f8fa;
+  --bg-tertiary: #eaeef2;
+  --bg-card: rgba(255, 255, 255, 0.92);
+  --border: #d0d7de;
+  --border-accent: #e94560;
+  --text-primary: #1f2328;
+  --text-secondary: #656d76;
+  --text-muted: #8c959f;
+  --accent: #d31549;
+  --accent-glow: rgba(211, 21, 73, 0.22);
+  --accent-subtle: rgba(211, 21, 73, 0.06);
+  --success: #1a7f37;
+  --success-bg: rgba(26, 127, 55, 0.12);
+  --warning: #9a6700;
+  --warning-bg: rgba(154, 103, 0, 0.12);
+  --info: #0969da;
+  --info-bg: rgba(9, 105, 218, 0.12);
+  --danger: #cf222e;
+  --shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;

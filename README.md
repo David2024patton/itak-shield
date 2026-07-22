@@ -2,10 +2,12 @@
 
 Privacy-first security proxy for AI agents. Detects and neutralizes **prompt injection attacks**, redacts **PII** before it reaches cloud APIs, and prevents **data leaks** in AI responses.
 
+> **Built with Qwen Token Plan safeguards in mind.** iTaK Shield was created to protect AI agents that use Qwen Cloud (Alibaba Token Plan) and other LLM subscriptions. It ensures your API keys, personal data, and credentials never leave your machine in plaintext — everything is redacted before reaching the cloud, and restored in the response. This is especially important when working on projects that involve customer data (e.g. pest control customer records) alongside AI-assisted coding tools.
+
 ```
 Your AI Agent  ──▶  iTaK Shield  ──▶  Cloud API
-              (scan + redact)     (sanitized)
-              ◀──  restore  ◀──
+               (scan + redact)     (sanitized)
+               ◀──  restore  ◀──
 ```
 
 ## Table of Contents
@@ -13,6 +15,9 @@ Your AI Agent  ──▶  iTaK Shield  ──▶  Cloud API
 - [Features](#features)
 - [How It Works](#how-it-works)
 - [Getting Started](#getting-started)
+- [Multi-Provider Gateway](#multi-provider-gateway)
+- [Integration Walkthroughs](#integration-walkthroughs)
+- [Program Walkthrough](#program-walkthrough)
 - [Prompt Injection Defense](#prompt-injection-defense)
 - [PII Detection & Redaction](#pii-detection--redaction)
 - [Output DLP (Data Leak Prevention)](#output-dlp-data-leak-prevention)
@@ -152,6 +157,222 @@ itak-shield
 ```bash
 # Instead of: https://api.openai.com
 # Use:        http://127.0.0.1:20979
+```
+
+---
+
+## Multi-Provider Gateway
+
+Shield can act as a **multi-provider OpenAI-compatible gateway**. Instead of pointing your AI tool at a single cloud API, you point it at Shield, and Shield routes requests to the correct upstream based on the `model` field. Your API keys live inside Shield — your AI tool never sees them.
+
+```
+opencode / AI tool
+       │
+       ▼
+  iTaK Shield (http://127.0.0.1:PORT/v1)
+   ├── /v1/models → aggregates all models from all providers
+   ├── model: "glm-5.2"           ──▶  Qwen Cloud (Alibaba)
+   ├── model: "gpt-oss:120b-cloud" ──▶  Ollama Cloud
+   ├── model: "qwen3.6-35b-a3b"   ──▶  local llama.cpp (no PII redaction, local)
+   └── model: "qwen2.5-coder:7b"  ──▶  local Ollama (no PII redaction, local)
+```
+
+### Configuration
+
+Enable the gateway in `shield.yaml`:
+
+```yaml
+gateway:
+  enabled: true
+  providers:
+    - id: qwen
+      name: "Qwen Cloud (Alibaba)"
+      api: "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
+      key: "your-qwen-token-plan-api-key"
+      models:
+        - qwen3.8-max-preview
+        - glm-5.2
+        - deepseek-v4-pro
+
+    - id: ollama-cloud
+      name: "Ollama Cloud"
+      api: "https://api.ollama.com/v1"
+      key: "your-ollama-cloud-key"
+      models:
+        - gpt-oss:20b-cloud
+        - qwen3-coder:480b-cloud
+
+    - id: llama-cpp-local
+      name: "llama.cpp (local)"
+      api: "http://127.0.0.1:8081/v1"
+      key: ""
+      no_auth: true      # strip Authorization header (Ollama/llama.cpp don't need it)
+      skip_pii: true     # data stays local — no redaction needed
+      models:
+        - qwen3.6-35b-a3b-mtp
+
+    # Add custom endpoints by copying this block:
+    # - id: my-server
+    #   name: "My Custom Server"
+    #   api: "https://my-server.example.com/v1"
+    #   key: "your-key"
+    #   models: [my-model-1, my-model-2]
+```
+
+### Provider Fields
+
+| Field | Description |
+|-------|-------------|
+| `id` | Short identifier (used in `/v1/models` as `owned_by`) |
+| `name` | Human-readable label |
+| `api` | Base URL of the OpenAI-compatible upstream |
+| `key` | Upstream API key (Shield injects it, your AI tool never sees it) |
+| `models` | List of model IDs to expose at this provider |
+| `skip_pii` | If `true`, PII is NOT redacted before forwarding (for local servers where data stays on your box) |
+| `no_auth` | If `true`, the `Authorization` header is stripped (for Ollama/llama.cpp that don't need auth) |
+
+### /v1/models Endpoint
+
+When the gateway is enabled, `GET /v1/models` returns an OpenAI-compatible list of all models from all providers. This means your AI tool's model picker sees every model from every upstream in one list.
+
+### SSE Streaming
+
+Shield passes through `text/event-stream` (Server-Sent Events) responses chunk-by-chunk, restoring PII tokens in each delta. This means live token streaming (`stream: true`) works transparently.
+
+### Multimodal Safety
+
+Base64 data URLs (`data:image/png;base64,...`) in multimodal requests are automatically excluded from PII scanning, so inline images are not false-flagged as base64 secrets.
+
+---
+
+## Integration Walkthroughs
+
+### OpenCode
+
+1. Start Shield:
+   ```bash
+   itak-shield --config shield.yaml
+   ```
+2. Add Shield as a custom provider in `~/.config/opencode/opencode.json`:
+   ```json
+   {
+     "provider": {
+       "shield": {
+         "name": "iTaK Shield (gateway)",
+         "api": "http://127.0.0.1:23871/v1",
+         "npm": "@ai-sdk/openai-compatible",
+         "options": { "apiKey": "shield-local" },
+         "models": {
+           "glm-5.2": { "name": "GLM 5.2 (via Shield)" },
+           "qwen3.8-max-preview": { "name": "Qwen 3.8 Max (via Shield)" }
+         }
+       }
+     }
+   }
+   ```
+   Replace `23871` with your Shield's port. List the models you configured in `shield.yaml`.
+3. In OpenCode, run `/models` and select a model from the Shield provider. All requests now go through Shield with PII redaction.
+
+### Generic OpenAI-Compatible Client
+
+Any tool that supports a custom OpenAI base URL works:
+
+1. Start Shield: `itak-shield --target https://api.openai.com --port 23871`
+2. Set your tool's API base URL to `http://127.0.0.1:23871`
+3. Set the API key to any string (Shield handles the real key internally)
+4. All requests are now scanned for PII and prompt injection before forwarding
+
+### Python (openai library)
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://127.0.0.1:23871/v1",
+    api_key="shield-local"  # Shield injects the real upstream key
+)
+
+response = client.chat.completions.create(
+    model="glm-5.2",
+    messages=[{"role": "user", "content": "Hello!"}]
+)
+```
+
+### cURL
+
+```bash
+curl http://127.0.0.1:23871/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer shield-local" \
+  -d '{"model":"glm-5.2","messages":[{"role":"user","content":"Hello!"}]}'
+```
+
+### Auto-Start on Boot
+
+Install Shield as a system service so it starts automatically when your computer reboots:
+
+```bash
+itak-shield install
+```
+
+- **Windows**: Creates a Windows Service via `sc.exe` (auto-start, restarts on failure)
+- **Linux**: Creates a systemd unit (auto-enable on boot)
+- **macOS**: Creates a launchd agent (starts on login)
+
+Check status: `itak-shield status`
+Remove: `itak-shield uninstall`
+
+---
+
+## Program Walkthrough
+
+iTaK Shield has two modes: **GUI mode** (browser dashboard) and **CLI mode** (headless proxy).
+
+### First Run (GUI Mode)
+
+1. Run `itak-shield` with no `--target` flag. Shield picks a random 5-digit port (verified available), prints the URL, and opens your browser.
+2. The **install wizard** appears on first run:
+   - **Step 1**: Choose usage mode (Individual or Company)
+   - **Step 2**: Select your AI provider from 24 presets (OpenAI, Anthropic, Qwen, Ollama, etc.) or a custom URL
+   - **Step 3**: Enter your API key and choose a port (random by default, with live availability check)
+   - **Step 4**: Review configuration and click Start
+3. The dashboard appears with live request/redaction counters, activity log, and tabs for Overview, Users, Security, Analytics, and Settings.
+
+### Dashboard Tabs
+
+| Tab | What it does |
+|-----|-------------|
+| **Overview** | Live request/redaction counters, recent activity log, proxy status |
+| **Users** | Create/delete users, generate/revoke API tokens (virtual API keys for team members) |
+| **Security** | Test the prompt injection guard, adjust sensitivity (Paranoid/Default/Relaxed) |
+| **Analytics** | Cache hit/miss stats, spend tracking per user/group, budget enforcement |
+| **Settings** | Audit log settings, DLP policies, backup management |
+
+### Light/Dark Theme
+
+Click the sun/moon icon in the top bar to toggle between dark and light mode. Your preference is saved in `localStorage` and applied before the page loads (no flash).
+
+### Help Icons
+
+Throughout the dashboard, you'll see **?** icons next to labels. Hover or click any of these for a floating tooltip explaining what that field does.
+
+### CLI Mode
+
+```bash
+itak-shield --target https://api.openai.com --port 23871 --verbose
+```
+
+This runs the proxy without the GUI. All PII scanning, redaction, and DLP policies still apply.
+
+### Subcommands
+
+```bash
+itak-shield scan < email.txt          # Scan a file/stdin for PII + prompt injection
+itak-shield user add --name "Dave"    # Add a user
+itak-shield token generate --user ID  # Generate an API token
+itak-shield install                   # Install as auto-start service
+itak-shield backup create             # Create a database backup
+itak-shield help                      # Full command reference
 ```
 
 ---

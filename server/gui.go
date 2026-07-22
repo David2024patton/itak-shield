@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -149,6 +150,9 @@ func (g *GUIServer) Serve(webFS embed.FS, guiPort int) error {
 	mux.HandleFunc("/api/guard/scan", g.handleGuardScan)
 	mux.HandleFunc("/api/guard/config", g.handleGuardConfig)
 
+	// Port availability check (for install wizard)
+	mux.HandleFunc("/api/port/check", g.handlePortCheck)
+
 	// Static files (the embedded web UI)
 	fileServer := http.FileServer(http.FS(subFS))
 	mux.Handle("/", fileServer)
@@ -177,7 +181,8 @@ func (g *GUIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Port < 1024 || req.Port > 65535 {
-		req.Port = 20979
+		writeJSON(w, map[string]interface{}{"ok": false, "error": "Port must be between 1024 and 65535"})
+		return
 	}
 
 	g.mu.Lock()
@@ -971,4 +976,28 @@ func (g *GUIServer) handleBilling(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// handlePortCheck tests whether a given TCP port is available on the GUI bind
+// address. Used by the install wizard to validate the chosen port before start.
+// GET /api/port/check?port=NNNN → {ok: true/false, port: NNNN}
+func (g *GUIServer) handlePortCheck(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	portStr := r.URL.Query().Get("port")
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port < 1024 || port > 65535 {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": "port must be 1024-65535"})
+		return
+	}
+	addr := fmt.Sprintf("%s:%d", g.bindAddr, port)
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "port": port, "error": "in use"})
+		return
+	}
+	ln.Close()
+	writeJSON(w, map[string]interface{}{"ok": true, "port": port})
 }
