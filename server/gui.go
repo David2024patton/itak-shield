@@ -18,6 +18,7 @@ import (
 	shielddb "github.com/David2024patton/itak-shield/db"
 	"github.com/David2024patton/itak-shield/guard"
 	"github.com/David2024patton/itak-shield/proxy"
+	svc "github.com/David2024patton/itak-shield/service"
 )
 
 // GUIServer serves the embedded web UI and manages the proxy lifecycle.
@@ -152,6 +153,10 @@ func (g *GUIServer) Serve(webFS embed.FS, guiPort int) error {
 
 	// Port availability check (for install wizard)
 	mux.HandleFunc("/api/port/check", g.handlePortCheck)
+
+	// Auto-start service management
+	mux.HandleFunc("/api/install", g.handleInstall)
+	mux.HandleFunc("/api/install/status", g.handleInstallStatus)
 
 	// Static files (the embedded web UI)
 	fileServer := http.FileServer(http.FS(subFS))
@@ -1000,4 +1005,65 @@ func (g *GUIServer) handlePortCheck(w http.ResponseWriter, r *http.Request) {
 	}
 	ln.Close()
 	writeJSON(w, map[string]interface{}{"ok": true, "port": port})
+}
+
+// handleInstall installs or removes the auto-start service.
+// POST /api/install with {"action":"install"} or {"action":"uninstall"}.
+// On Windows, install triggers a UAC prompt if not admin.
+func (g *GUIServer) handleInstall(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Action string `json:"action"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": "Invalid request body"})
+		return
+	}
+
+	switch req.Action {
+	case "install":
+		// Run in a goroutine — on Windows this may trigger a UAC prompt
+		// and relaunch a new elevated process. We return immediately.
+		go func() {
+			if err := svc.Install("", nil); err != nil {
+				log.Printf("[iTaK Shield] Auto-start install error: %v", err)
+			}
+		}()
+		writeJSON(w, map[string]interface{}{
+			"ok":      true,
+			"message": "Installing auto-start. If you see a UAC prompt, click Yes to allow.",
+		})
+
+	case "uninstall":
+		if err := svc.Uninstall(); err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+			return
+		}
+		writeJSON(w, map[string]interface{}{"ok": true, "message": "Auto-start removed."})
+
+	default:
+		writeJSON(w, map[string]interface{}{"ok": false, "error": "action must be install or uninstall"})
+	}
+}
+
+// handleInstallStatus reports whether the auto-start service is installed.
+// GET /api/install/status → {installed: bool, running: bool}
+func (g *GUIServer) handleInstallStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	installed, running, err := svc.Status()
+	if err != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, map[string]interface{}{
+		"ok":        true,
+		"installed": installed,
+		"running":   running,
+	})
 }

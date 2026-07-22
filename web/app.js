@@ -908,6 +908,27 @@ function checkPortAvailability() {
         });
 }
 
+// ─── Auto-Start Service Install ───────────────
+
+function installAutoStart() {
+    fetch('/api/install', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'install' })
+    })
+        .then(function (resp) { return resp.json(); })
+        .then(function (data) {
+            if (data.ok) {
+                addActivityLog('INSTALL', 'Auto-start installed: ' + (data.message || ''));
+            } else {
+                addActivityLog('INSTALL', 'Auto-start failed: ' + (data.error || ''));
+            }
+        })
+        .catch(function (err) {
+            addActivityLog('INSTALL', 'Auto-start request failed: ' + err.message);
+        });
+}
+
 function startProxy() {
     var btn = document.getElementById('startBtn');
     btn.disabled = true;
@@ -938,6 +959,12 @@ function startProxy() {
                 startTime = Date.now();
                 showDashboard(port, targetUrl);
                 startPolling();
+
+                // If user checked "start on boot", install the service now.
+                var autoStart = document.getElementById('autoStartCheckbox');
+                if (autoStart && autoStart.checked) {
+                    installAutoStart();
+                }
             } else {
                 var errMsg = data.error || 'Unknown error';
                 // If port is in use, offer to randomize.
