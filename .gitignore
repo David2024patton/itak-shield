@@ -27,3 +27,29 @@ node_modules/
 itak-shield
 goproxy.exe
 itak-shield.exe
+
+# ── Secrets & runtime state (NEVER commit) ──────────────────
+# Auth databases (SQLite user/token store)
+shield.db
+shield.db-shm
+shield.db-wal
+shield-users.json
+shield-users.json.tmp
+shield-users.json.migrated
+
+# Config with real API keys
+shield.yaml
+shield.yml
+.env
+.env.*
+*.local.yaml
+
+# Audit logs (may contain request metadata)
+audit.jsonl
+audit.jsonl.*
+audit/
+logs/
+
+# Backups
+*.bak
+*.db.bak
