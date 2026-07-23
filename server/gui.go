@@ -1027,7 +1027,15 @@ func (g *GUIServer) handleInstall(w http.ResponseWriter, r *http.Request) {
 
 	switch req.Action {
 	case "install":
-		if err := svc.Install("", nil); err != nil {
+		// Build service args so the service starts with the same config
+		// and port as the currently running proxy.
+		var args []string
+		if g.proxyPort > 0 {
+			args = append(args, "--port", fmt.Sprintf("%d", g.proxyPort))
+		}
+		args = append(args, "--target", g.proxyTarget)
+		args = append(args, "--no-gui")
+		if err := svc.Install("", args); err != nil {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
 			return
 		}

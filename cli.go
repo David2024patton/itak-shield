@@ -386,7 +386,40 @@ func runToken(args []string) {
 // ─── install / uninstall / status ───────────────
 
 func runInstall(args []string) {
-	err := svc.Install("", args)
+	// Parse optional --config and --port flags from the install args.
+	// These get baked into the service's binPath so the service starts
+	// with the right configuration on boot.
+	var configPath string
+	var port int
+	var target string
+	var extraArgs []string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--config":
+			if i+1 < len(args) { configPath = args[i+1]; i++ }
+		case "--port":
+			if i+1 < len(args) { fmt.Sscanf(args[i+1], "%d", &port); i++ }
+		case "--target":
+			if i+1 < len(args) { target = args[i+1]; i++ }
+		default:
+			extraArgs = append(extraArgs, args[i])
+		}
+	}
+
+	var svcArgs []string
+	if configPath != "" {
+		svcArgs = append(svcArgs, "--config", configPath)
+	}
+	if port > 0 {
+		svcArgs = append(svcArgs, "--port", fmt.Sprintf("%d", port))
+	}
+	if target != "" {
+		svcArgs = append(svcArgs, "--target", target)
+	}
+	svcArgs = append(svcArgs, "--no-gui")
+	svcArgs = append(svcArgs, extraArgs...)
+
+	err := svc.Install("", svcArgs)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Install failed: %v\n", err)
 		os.Exit(1)
